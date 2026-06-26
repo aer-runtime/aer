@@ -128,7 +128,7 @@ Grandchildren inherit the root's stdout/stderr pipe handles. `wait_with_output()
 |---|---|---|
 | M1 | Core scaffold, state machine, STARTED/EXITED events, single-shot execution | ✓ Complete |
 | M2 | Configurable timeout, kill escalation (SIGTERM → SIGKILL / TerminateProcess) | ✓ Complete |
-| M3 | Process tree cleanup (Job Objects on Windows, setsid on Unix) | In progress |
+| M3 | Process tree cleanup (Job Objects on Windows, setsid on Unix) | ✓ Complete |
 | M4 | FFI boundary (C-compatible ABI) | Pending |
 | M5 | .NET binding (P/Invoke wrapper) | Pending |
 | M6 | Python binding (ctypes/cffi wrapper) | Pending |

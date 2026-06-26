@@ -90,19 +90,19 @@ impl OsProcess for WindowsProcess {
             mut child, kill, ..
         } = handle;
 
-        // Drain pipes in a background thread so the root process can write freely
-        // without filling the OS pipe buffer (which would deadlock child.wait()).
-        // MUST start before child.wait() is called.
-        let stdout = child.stdout.take();
-        let stderr = child.stderr.take();
-        let drain = thread::spawn(move || {
-            use std::io::{copy, sink};
-            if let Some(mut out) = stdout {
-                let _ = copy(&mut out, &mut sink());
-            }
-            if let Some(mut err) = stderr {
-                let _ = copy(&mut err, &mut sink());
-            }
+        // One drain thread per pipe so stdout and stderr are drained concurrently.
+        // Sequential draining deadlocks if the child fills the stderr buffer while
+        // the drain thread is still blocked on stdout (or vice versa). Both threads
+        // must start before child.wait() is called.
+        let stdout_drain = child.stdout.take().map(|mut out| {
+            thread::spawn(move || {
+                let _ = std::io::copy(&mut out, &mut std::io::sink());
+            })
+        });
+        let stderr_drain = child.stderr.take().map(|mut err| {
+            thread::spawn(move || {
+                let _ = std::io::copy(&mut err, &mut std::io::sink());
+            })
         });
 
         // Wait for the root process only — NOT for grandchildren to close the pipe.
@@ -112,15 +112,18 @@ impl OsProcess for WindowsProcess {
         // deliberately holds no extra clone, so this is the last reference:
         // CloseHandle fires immediately, triggering KILL_ON_JOB_CLOSE for every
         // grandchild still in the job (closing their inherited pipe handles and
-        // unblocking the drain thread). In the timeout path, TerminateJobObject
+        // unblocking the drain threads). In the timeout path, TerminateJobObject
         // has already killed the tree; this just decrements from 2 → 1 (the
         // monitor still holds one ref, which drops when the monitor thread exits).
         drop(kill);
 
-        // Drain thread unblocks once all pipe write-ends are closed — either by
-        // KILL_ON_JOB_CLOSE fired above, or by TerminateJobObject (timeout path)
-        // which fires before child.wait() returns.
-        let _ = drain.join();
+        // Drain threads unblock once all pipe write-ends are closed.
+        if let Some(t) = stdout_drain {
+            let _ = t.join();
+        }
+        if let Some(t) = stderr_drain {
+            let _ = t.join();
+        }
 
         Ok(status.code().unwrap_or(-1))
     }

@@ -17,7 +17,7 @@ AER is a Rust core library that guarantees consistent process lifecycle behavior
 - **Deterministic events** — every execution emits `Started` then `Exited`, in that order, always
 - **No silent failures** — spawn errors are typed and explicit; no swallowed results
 - **Platform-agnostic contract** — Windows and Linux behave identically from the caller's perspective
-- **Future: no orphans** — process tree cleanup (M3) will ensure nothing survives final termination
+- **No orphans** — process tree cleanup guarantees nothing survives `run()` returning (Job Objects on Windows, setsid/killpg on Unix)
 
 ---
 
@@ -79,7 +79,7 @@ Dependencies flow inward only. No process logic lives in the bindings.
 |---|---|---|
 | **M1: Core Scaffold** | ✅ Complete | State machine, STARTED/EXITED events, single-shot execution |
 | **M2: Timeout & Kill** | ✅ Complete | Configurable timeout, graceful termination, kill escalation |
-| **M3: Process Tree** | 🚧 In progress | Job Objects (Windows), setsid (Unix) — no orphans guaranteed |
+| **M3: Process Tree** | ✅ Complete | Job Objects (Windows), setsid (Unix) — no orphans guaranteed |
 | **M4: FFI Boundary** | Planned | Stable C-compatible ABI for language bindings |
 | **M5: .NET Binding** | Planned | P/Invoke wrapper, `IAsyncEnumerable<Event>` |
 | **M6: Python Binding** | Planned | ctypes/cffi wrapper, asyncio context manager |

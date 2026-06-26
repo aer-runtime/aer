@@ -48,26 +48,29 @@ impl OsProcess for UnixProcess {
         } = handle;
         let pgid = kill.pgid;
 
-        // Drain pipes concurrently so the root process can write without blocking.
-        let stdout = child.stdout.take();
-        let stderr = child.stderr.take();
-        let drain = thread::spawn(move || {
-            use std::io::{copy, sink};
-            if let Some(mut out) = stdout {
-                let _ = copy(&mut out, &mut sink());
-            }
-            if let Some(mut err) = stderr {
-                let _ = copy(&mut err, &mut sink());
-            }
+        // One drain thread per pipe so stdout and stderr are drained concurrently.
+        // Sequential draining deadlocks if the child fills the stderr buffer while
+        // the drain thread is still blocked on stdout (or vice versa). Both threads
+        // must start before child.wait() is called.
+        let stdout_drain = child.stdout.take().map(|mut out| {
+            thread::spawn(move || {
+                let _ = std::io::copy(&mut out, &mut std::io::sink());
+            })
+        });
+        let stderr_drain = child.stderr.take().map(|mut err| {
+            thread::spawn(move || {
+                let _ = std::io::copy(&mut err, &mut std::io::sink());
+            })
         });
 
-        // Wait for the root process only.
-        let status = child.wait().map_err(AerError::WaitFailed)?;
+        // Save result so cleanup always runs even if wait fails (e.g. ECHILD).
+        // Skipping killpg on wait error would leave grandchildren as orphans.
+        let wait_res = child.wait();
 
         // Kill the entire process group after root exits. On the timeout path,
         // kill_escalating already sent SIGKILL; ESRCH (empty group) is not an error.
         // On the natural-exit path, this terminates any grandchildren that inherited
-        // stdout/stderr handles, unblocking the drain thread below.
+        // stdout/stderr handles, unblocking the drain threads below.
         if unsafe { libc::killpg(pgid as i32, libc::SIGKILL) } != 0 {
             let e = io::Error::last_os_error();
             if e.raw_os_error() != Some(libc::ESRCH) {
@@ -75,9 +78,14 @@ impl OsProcess for UnixProcess {
             }
         }
 
-        let _ = drain.join();
+        if let Some(t) = stdout_drain {
+            let _ = t.join();
+        }
+        if let Some(t) = stderr_drain {
+            let _ = t.join();
+        }
 
-        Ok(status.code().unwrap_or(-1))
+        Ok(wait_res.map_err(AerError::WaitFailed)?.code().unwrap_or(-1))
     }
 
     fn kill_escalating(kill: KillHandle, grace: Duration) -> Result<(), AerError> {
