@@ -1,4 +1,4 @@
-# aer
+# aer — Agent Execution Runtime
 
 [![CI](https://github.com/aer-runtime/aer/actions/workflows/ci.yml/badge.svg)](https://github.com/aer-runtime/aer/actions/workflows/ci.yml)
 
