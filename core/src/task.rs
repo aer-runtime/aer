@@ -68,13 +68,20 @@ impl Task {
             });
         }
 
-        let code = PlatformProcess::wait(handle)?;
+        let os_code = PlatformProcess::wait(handle)?;
         let _ = cancel_tx.send(()); // wake monitor early if process exited before timeout
+
+        let was_timed_out = timed_out.load(Ordering::SeqCst);
+        // Enforce the spec: timeout kills always report code -1 regardless of what
+        // the OS returns (TerminateProcess on Windows sets an explicit exit code;
+        // SIGKILL on Unix produces no code at all). The caller learns the real reason
+        // from the Err(TimedOut) return value, not from the exit code.
+        let code = if was_timed_out { -1 } else { os_code };
 
         machine.transition(State::Exited)?;
         on_event(Event::Exited { code });
 
-        if timed_out.load(Ordering::SeqCst) {
+        if was_timed_out {
             return Err(AerError::TimedOut);
         }
 
