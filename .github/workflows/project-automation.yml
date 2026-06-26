@@ -94,7 +94,7 @@ jobs:
               }
             }' -F id="$NODE_ID" -F proj="${{ steps.meta.outputs.project_id }}" \
             | jq -r --arg proj "${{ steps.meta.outputs.project_id }}" '
-                .data.node.projectItems.nodes[]
+                (.data.node.projectItems.nodes // [])[]
                 | select(.project.id == $proj) | .id')
 
           echo "item_id=$ITEM_ID" >> "$GITHUB_OUTPUT"
