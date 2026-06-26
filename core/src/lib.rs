@@ -24,6 +24,10 @@ pub enum AerError {
         from: MachineState,
         to: MachineState,
     },
+    /// The process was killed because the configured timeout elapsed.
+    TimedOut,
+    /// The kill attempt itself failed (e.g. the process already exited by the time kill was sent).
+    KillFailed(io::Error),
 }
 
 impl fmt::Display for AerError {
@@ -34,6 +38,8 @@ impl fmt::Display for AerError {
             AerError::InvalidStateTransition { from, to } => {
                 write!(f, "invalid state transition: {} → {}", from, to)
             }
+            AerError::TimedOut => write!(f, "process timed out and was killed"),
+            AerError::KillFailed(e) => write!(f, "kill attempt failed: {}", e),
         }
     }
 }
@@ -41,8 +47,8 @@ impl fmt::Display for AerError {
 impl std::error::Error for AerError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            AerError::SpawnFailed(e) | AerError::WaitFailed(e) => Some(e),
-            AerError::InvalidStateTransition { .. } => None,
+            AerError::SpawnFailed(e) | AerError::WaitFailed(e) | AerError::KillFailed(e) => Some(e),
+            AerError::InvalidStateTransition { .. } | AerError::TimedOut => None,
         }
     }
 }
