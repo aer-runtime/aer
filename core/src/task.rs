@@ -52,18 +52,24 @@ impl Task {
         on_event(Event::Started { pid });
 
         // If a timeout is configured, spawn a monitor thread that kills the process
-        // after the deadline. The main thread cancels it by sending on `cancel_tx`
+        // tree after the deadline. The main thread cancels it by sending on `cancel_tx`
         // once wait() returns. The `timed_out` flag distinguishes a timeout kill
         // from a natural exit.
+        //
+        // The KillHandle is cloned ONLY when the monitor thread is spawned. This
+        // ensures wait() holds the sole Arc reference in the no-timeout path, so
+        // drop(kill) inside wait() fires CloseHandle (Windows) immediately after
+        // the root exits — unblocking any grandchildren that hold inherited pipes.
         let timed_out = Arc::new(AtomicBool::new(false));
         let (cancel_tx, cancel_rx) = mpsc::channel::<()>();
 
         if let Some(timeout) = self.timeout {
+            let kill_for_monitor = handle.kill.clone();
             let timed_out_clone = Arc::clone(&timed_out);
             thread::spawn(move || {
                 if let Err(mpsc::RecvTimeoutError::Timeout) = cancel_rx.recv_timeout(timeout) {
                     timed_out_clone.store(true, Ordering::SeqCst);
-                    let _ = PlatformProcess::kill_escalating(pid, KILL_GRACE);
+                    let _ = PlatformProcess::kill_escalating(kill_for_monitor, KILL_GRACE);
                 }
             });
         }
