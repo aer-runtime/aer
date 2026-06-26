@@ -10,24 +10,29 @@ pub(crate) struct UnixProcess;
 
 impl OsProcess for UnixProcess {
     fn spawn(program: &str, args: &[&str]) -> Result<OsHandle, AerError> {
-        let child = Command::new(program)
-            .args(args)
+        let mut cmd = Command::new(program);
+        cmd.args(args)
             // Pipes are required even though output is not surfaced to callers.
             // Without draining, a child writing beyond the OS pipe buffer deadlocks
-            // wait_with_output(). Never use Stdio::inherit here.
+            // child.wait(). Never use Stdio::inherit here.
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            // setsid() makes the child the leader of a new session and process group.
-            // After exec, the child's PID == its PGID, so killpg(child_pid, sig)
-            // broadcasts to the entire process tree.
-            .pre_exec(|| {
-                if unsafe { libc::setsid() } < 0 {
+            .stderr(Stdio::piped());
+
+        // SAFETY: The closure only calls setsid(), which is documented as
+        // async-signal-safe — safe to call between fork and exec.
+        let child = unsafe {
+            cmd.pre_exec(|| {
+                // setsid() makes the child the leader of a new session and process
+                // group. After exec, child PID == PGID, so killpg(child_pid, sig)
+                // broadcasts to the entire process tree rooted here.
+                if libc::setsid() < 0 {
                     return Err(io::Error::last_os_error());
                 }
                 Ok(())
             })
-            .spawn()
-            .map_err(AerError::SpawnFailed)?;
+        }
+        .spawn()
+        .map_err(AerError::SpawnFailed)?;
 
         let pid = child.id();
         Ok(OsHandle {
