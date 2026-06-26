@@ -6,6 +6,7 @@ use std::mem::size_of;
 use std::os::windows::io::AsRawHandle;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
+use std::thread;
 use std::time::Duration;
 use windows_sys::Win32::Foundation::CloseHandle;
 use windows_sys::Win32::System::JobObjects::{
@@ -85,16 +86,43 @@ impl OsProcess for WindowsProcess {
     }
 
     fn wait(handle: OsHandle) -> Result<i32, AerError> {
-        // wait_with_output() drains stdout+stderr before returning.
-        // When this call returns, handle is consumed and handle.kill (Arc<JobHandle>)
-        // drops. If any children survived (natural-exit path), KILL_ON_JOB_CLOSE
-        // fires at that point. On the timeout path, TerminateJobObject already killed
-        // the tree; CloseHandle via Drop is then a no-op cleanup.
-        let output = handle
-            .child
-            .wait_with_output()
-            .map_err(AerError::WaitFailed)?;
-        Ok(output.status.code().unwrap_or(-1))
+        let OsHandle {
+            mut child, kill, ..
+        } = handle;
+
+        // Drain pipes in a background thread so the root process can write freely
+        // without filling the OS pipe buffer (which would deadlock child.wait()).
+        // MUST start before child.wait() is called.
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+        let drain = thread::spawn(move || {
+            use std::io::{copy, sink};
+            if let Some(mut out) = stdout {
+                let _ = copy(&mut out, &mut sink());
+            }
+            if let Some(mut err) = stderr {
+                let _ = copy(&mut err, &mut sink());
+            }
+        });
+
+        // Wait for the root process only — NOT for grandchildren to close the pipe.
+        let status = child.wait().map_err(AerError::WaitFailed)?;
+
+        // Decrement the Arc<JobHandle> ref count. In the no-timeout path, task.rs
+        // deliberately holds no extra clone, so this is the last reference:
+        // CloseHandle fires immediately, triggering KILL_ON_JOB_CLOSE for every
+        // grandchild still in the job (closing their inherited pipe handles and
+        // unblocking the drain thread). In the timeout path, TerminateJobObject
+        // has already killed the tree; this just decrements from 2 → 1 (the
+        // monitor still holds one ref, which drops when the monitor thread exits).
+        drop(kill);
+
+        // Drain thread unblocks once all pipe write-ends are closed — either by
+        // KILL_ON_JOB_CLOSE fired above, or by TerminateJobObject (timeout path)
+        // which fires before child.wait() returns.
+        let _ = drain.join();
+
+        Ok(status.code().unwrap_or(-1))
     }
 
     fn kill_escalating(kill: KillHandle, _grace: Duration) -> Result<(), AerError> {
