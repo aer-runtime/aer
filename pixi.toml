@@ -1,0 +1,16 @@
+[workspace]
+name = "aer"
+version = "0.1.0"
+channels = ["conda-forge"]
+platforms = ["win-64", "linux-64", "osx-arm64"]
+
+[dependencies]
+rust = ">=1.80"
+
+[tasks]
+build     = "cargo build --workspace"
+test      = "cargo test --workspace"
+lint      = "cargo clippy --workspace --all-targets -- -D warnings"
+fmt       = "cargo fmt --all"
+fmt-check = "cargo fmt --all -- --check"
+example   = "cargo run --example hello"
