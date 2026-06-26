@@ -48,11 +48,15 @@ impl Task {
         let handle = PlatformProcess::spawn(&self.program, &str_args)?;
 
         let pid = handle.pid;
+        // Clone KillHandle before handle is consumed by wait(). On Windows this
+        // clones the Arc<JobHandle>, giving the monitor thread a shared reference
+        // to the job object. On Unix it copies the pgid (a plain u32).
+        let kill_handle = handle.kill.clone();
         machine.transition(State::Running)?;
         on_event(Event::Started { pid });
 
         // If a timeout is configured, spawn a monitor thread that kills the process
-        // after the deadline. The main thread cancels it by sending on `cancel_tx`
+        // tree after the deadline. The main thread cancels it by sending on `cancel_tx`
         // once wait() returns. The `timed_out` flag distinguishes a timeout kill
         // from a natural exit.
         let timed_out = Arc::new(AtomicBool::new(false));
@@ -63,7 +67,7 @@ impl Task {
             thread::spawn(move || {
                 if let Err(mpsc::RecvTimeoutError::Timeout) = cancel_rx.recv_timeout(timeout) {
                     timed_out_clone.store(true, Ordering::SeqCst);
-                    let _ = PlatformProcess::kill_escalating(pid, KILL_GRACE);
+                    let _ = PlatformProcess::kill_escalating(kill_handle, KILL_GRACE);
                 }
             });
         }
