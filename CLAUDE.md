@@ -47,23 +47,23 @@ Pixi manages the Rust toolchain — no separate `rustup` install needed.
 - **lib.rs** — re-exports public types, defines `AerError`. Nothing else.
 - **event.rs** — pure data: the `Event` enum. No logic.
 - **machine.rs** — `StateMachine` enforces legal transitions. Not public; callers see only events.
-- **task.rs** — `Task::run()` drives the full lifecycle: spawn → Started → wait → Exited.
+- **task.rs** — `Task::run()` drives the full lifecycle: spawn → Started → wait → Exited. Hosts the timeout monitor thread (M2).
 - **os/mod.rs** — `OsProcess` trait + `OsHandle`. `cfg` gates select the platform impl.
-- **os/windows.rs / unix.rs** — OS-specific spawn/wait. Must not leak platform behavior into callers.
+- **os/windows.rs / unix.rs** — OS-specific spawn, wait, and kill escalation. Must not leak platform behavior into callers.
 
 ---
 
-## Milestone constraints (what M1 excludes)
+## Milestone constraints
 
 Do not add any of these until the milestone that introduces them:
 
-- Timeout handling
-- Kill / termination escalation
-- Process tree cleanup (Job Objects, setsid)
-- FFI boundary
-- Language bindings (.NET, Python)
-- Async execution
-- STDOUT/STDERR surfacing to callers
+| Feature | Milestone |
+|---|---|
+| Process tree cleanup (Job Objects, setsid) | M3 |
+| FFI boundary | M4 |
+| Language bindings (.NET, Python) | M5/M6 |
+| Async execution | M5/M6 |
+| STDOUT/STDERR surfacing to callers | TBD |
 
 ---
 
