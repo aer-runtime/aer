@@ -59,39 +59,41 @@ pub enum AerErrorCode {
     Panic = 8,
 }
 
-/// C-compatible event. kind 0 = Started (pid valid); kind 1 = Exited (code valid).
+/// C-compatible event delivered to AerEventCallback.
+///
+/// `kind` selects which fields are valid:
+///   0 = Started  — `pid` is the process ID
+///   1 = Exited   — `code` is the exit code (-1 if killed without a code)
+///   2 = StdoutChunk — `seq`, `data`, `data_len` are valid; only when capture enabled
+///   3 = StderrChunk — `seq`, `data`, `data_len` are valid; only when capture enabled
+///
+/// For chunk kinds, `data` points into Rust-owned memory that is only valid for
+/// the duration of the callback. Copy the bytes before the callback returns.
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct AerEvent {
     pub kind: u32,
-    pub pid: u32,
-    pub code: i32,
+    pub pid: u32,        // valid when kind == 0
+    pub code: i32,       // valid when kind == 1
+    pub _pad: u32,       // explicit padding; keeps seq aligned to 8 bytes on all targets
+    pub seq: u64,        // valid when kind == 2 or 3; monotonically increasing within stream
+    pub data: *const u8, // valid when kind == 2 or 3; only valid during the callback
+    pub data_len: usize, // byte count for data
 }
 
-impl From<Event> for AerEvent {
-    fn from(e: Event) -> Self {
-        match e {
-            Event::Started { pid } => AerEvent {
-                kind: 0,
-                pid,
-                code: 0,
-            },
-            Event::Exited { code } => AerEvent {
-                kind: 1,
-                pid: 0,
-                code,
-            },
-        }
-    }
-}
+// SAFETY: AerEvent is only passed by pointer to C callbacks, never moved across
+// threads by Rust. Implementing Send/Sync here is needed only if the struct
+// were put in a thread-safe container, which we never do.
+// Raw pointer fields make the compiler's auto-impl conservative; the pointer is
+// used as a read-only view into a local Vec<u8> valid only during the callback.
 
 /// Nullable C function pointer for receiving events. Pass NULL to ignore events.
 pub type AerEventCallback = Option<unsafe extern "C" fn(*const AerEvent, *mut c_void)>;
 
 /// Opaque handle to a Task. Heap-allocated; free with aer_task_free.
 pub struct AerTask {
-    // Option<Task> so we can call the consuming with_timeout builder:
-    // take() → with_timeout() → put back.
+    // Option<Task> so we can call consuming builders:
+    // take() → with_timeout() / with_capture_output() → put back.
     inner: Option<Task>,
     has_run: bool,
 }
@@ -185,6 +187,44 @@ pub unsafe extern "C" fn aer_task_with_timeout(
     }
 }
 
+/// Enable stdout and stderr capture on the task. Must be called before aer_task_run.
+///
+/// When enabled, StdoutChunk (kind=2) and StderrChunk (kind=3) events are delivered
+/// to the callback between Started and Exited. The `data` pointer in those events
+/// is only valid for the duration of the callback; copy the bytes if needed later.
+///
+/// # Safety
+/// `task` must be a valid pointer returned by aer_task_new that has not been freed.
+#[no_mangle]
+pub unsafe extern "C" fn aer_task_with_capture_output(
+    task: *mut AerTask,
+    capture: bool,
+) -> AerErrorCode {
+    match std::panic::catch_unwind(AssertUnwindSafe(|| {
+        if task.is_null() {
+            return AerErrorCode::NullPointer;
+        }
+        let t = unsafe { &mut *task };
+        if t.has_run {
+            return AerErrorCode::AlreadyRun;
+        }
+        match t.inner.take() {
+            Some(inner) => {
+                t.inner = Some(inner.with_capture_output(capture));
+                clear_last_error();
+                AerErrorCode::Ok
+            }
+            None => AerErrorCode::AlreadyRun,
+        }
+    })) {
+        Ok(code) => code,
+        Err(e) => {
+            set_last_error(format_panic(e));
+            AerErrorCode::Panic
+        }
+    }
+}
+
 /// Run the task. May only be called once per handle.
 ///
 /// `callback` may be NULL to ignore events.
@@ -218,8 +258,57 @@ pub unsafe extern "C" fn aer_task_run(
 
         let result = inner.run(|event| {
             if let Some(cb) = callback {
-                let c_event = AerEvent::from(event);
-                unsafe { cb(&c_event as *const AerEvent, user_data) };
+                match event {
+                    Event::Started { pid } => {
+                        let c_event = AerEvent {
+                            kind: 0,
+                            pid,
+                            code: 0,
+                            _pad: 0,
+                            seq: 0,
+                            data: std::ptr::null(),
+                            data_len: 0,
+                        };
+                        unsafe { cb(&c_event as *const AerEvent, user_data) };
+                    }
+                    Event::Exited { code } => {
+                        let c_event = AerEvent {
+                            kind: 1,
+                            pid: 0,
+                            code,
+                            _pad: 0,
+                            seq: 0,
+                            data: std::ptr::null(),
+                            data_len: 0,
+                        };
+                        unsafe { cb(&c_event as *const AerEvent, user_data) };
+                    }
+                    Event::StdoutChunk { seq, bytes } => {
+                        let c_event = AerEvent {
+                            kind: 2,
+                            pid: 0,
+                            code: 0,
+                            _pad: 0,
+                            seq,
+                            data: bytes.as_ptr(),
+                            data_len: bytes.len(),
+                        };
+                        // bytes is alive here; pointer valid during cb
+                        unsafe { cb(&c_event as *const AerEvent, user_data) };
+                    }
+                    Event::StderrChunk { seq, bytes } => {
+                        let c_event = AerEvent {
+                            kind: 3,
+                            pid: 0,
+                            code: 0,
+                            _pad: 0,
+                            seq,
+                            data: bytes.as_ptr(),
+                            data_len: bytes.len(),
+                        };
+                        unsafe { cb(&c_event as *const AerEvent, user_data) };
+                    }
+                }
             }
         });
 

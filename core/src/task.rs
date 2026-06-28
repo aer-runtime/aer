@@ -1,7 +1,7 @@
 use crate::{
     event::Event,
     machine::{State, StateMachine},
-    os::{OsProcess, PlatformProcess},
+    os::{OsProcess, OutputSinks, PlatformProcess},
     AerError,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,6 +16,7 @@ pub struct Task {
     program: String,
     args: Vec<String>,
     timeout: Option<Duration>,
+    capture_output: bool,
 }
 
 impl Task {
@@ -24,6 +25,7 @@ impl Task {
             program: program.into(),
             args: args.into_iter().map(Into::into).collect(),
             timeout: None,
+            capture_output: false,
         }
     }
 
@@ -35,9 +37,18 @@ impl Task {
         self
     }
 
+    /// Enables stdout and stderr capture. When true, `StdoutChunk` and
+    /// `StderrChunk` events are emitted between `Started` and `Exited`.
+    pub fn with_capture_output(mut self, capture: bool) -> Self {
+        self.capture_output = capture;
+        self
+    }
+
     /// Spawns the process and blocks until it exits.
     ///
-    /// Calls `on_event` exactly twice on success: `Started` then `Exited`.
+    /// Calls `on_event` with `Started` then `Exited` on every execution.
+    /// When `capture_output` is true, `StdoutChunk` and `StderrChunk` events
+    /// are emitted in between (stdout stream first, then stderr stream).
     /// If spawning fails, `on_event` is never called and `SpawnFailed` is returned.
     /// If a timeout was set and fires, `Exited` is still called before returning
     /// `Err(AerError::TimedOut)`.
@@ -74,7 +85,29 @@ impl Task {
             });
         }
 
-        let os_code = PlatformProcess::wait(handle)?;
+        let (sinks, stdout_rx, stderr_rx) = if self.capture_output {
+            let (stdout_tx, stdout_rx) = mpsc::channel::<(u64, Vec<u8>)>();
+            let (stderr_tx, stderr_rx) = mpsc::channel::<(u64, Vec<u8>)>();
+            (
+                OutputSinks {
+                    stdout: Some(stdout_tx),
+                    stderr: Some(stderr_tx),
+                },
+                Some(stdout_rx),
+                Some(stderr_rx),
+            )
+        } else {
+            (
+                OutputSinks {
+                    stdout: None,
+                    stderr: None,
+                },
+                None,
+                None,
+            )
+        };
+
+        let os_code = PlatformProcess::wait(handle, sinks)?;
         let _ = cancel_tx.send(()); // wake monitor early if process exited before timeout
 
         let was_timed_out = timed_out.load(Ordering::SeqCst);
@@ -83,6 +116,21 @@ impl Task {
         // SIGKILL on Unix produces no code at all). The caller learns the real reason
         // from the Err(TimedOut) return value, not from the exit code.
         let code = if was_timed_out { -1 } else { os_code };
+
+        // Drain captured output and emit chunk events between Started and Exited.
+        // wait() blocks until drain threads complete, so both receivers are fully
+        // populated by the time we read them here. Stdout stream is emitted first;
+        // the spec makes no cross-stream ordering guarantee.
+        if let Some(rx) = stdout_rx {
+            for (seq, bytes) in rx {
+                on_event(Event::StdoutChunk { seq, bytes });
+            }
+        }
+        if let Some(rx) = stderr_rx {
+            for (seq, bytes) in rx {
+                on_event(Event::StderrChunk { seq, bytes });
+            }
+        }
 
         machine.transition(State::Exited)?;
         on_event(Event::Exited { code });

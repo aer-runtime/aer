@@ -14,6 +14,7 @@ fn main() -> Result<(), AerError> {
     task.run(|event| match event {
         Event::Started { pid } => println!("  → Started  (pid {})", pid),
         Event::Exited { code } => println!("  → Exited   (code {})\n", code),
+        _ => {}
     })?;
 
     println!("Done.");

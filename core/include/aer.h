@@ -26,13 +26,39 @@ typedef enum {
 } AerErrorCode;
 
 /* -------------------------------------------------------------------------
+ * Event kinds
+ * Matches the `kind` field in AerEvent.
+ * ------------------------------------------------------------------------- */
+#define AER_EVENT_STARTED       0u  /* pid field valid */
+#define AER_EVENT_EXITED        1u  /* code field valid */
+#define AER_EVENT_STDOUT_CHUNK  2u  /* seq, data, data_len valid; only with capture enabled */
+#define AER_EVENT_STDERR_CHUNK  3u  /* seq, data, data_len valid; only with capture enabled */
+
+/* -------------------------------------------------------------------------
  * Event
- * Delivered to AerEventCallback in order: Started, then Exited.
+ * Delivered to AerEventCallback. Check `kind` to determine which fields apply.
+ *
+ * Layout (all targets, 64-bit assumed for pointer/size fields):
+ *   offset  0: kind      uint32_t
+ *   offset  4: pid       uint32_t
+ *   offset  8: code      int32_t
+ *   offset 12: _pad      uint32_t   (reserved; always 0)
+ *   offset 16: seq       uint64_t
+ *   offset 24: data      const uint8_t *
+ *   offset 32: data_len  size_t
+ *   total: 40 bytes (64-bit)
+ *
+ * For chunk kinds (2, 3): `data` is only valid for the duration of the callback.
+ * Copy the bytes if you need them after the callback returns.
  * ------------------------------------------------------------------------- */
 typedef struct {
-    uint32_t kind;  /* 0 = Started (pid field valid), 1 = Exited (code field valid) */
-    uint32_t pid;   /* process ID; meaningful when kind == 0 */
-    int32_t  code;  /* exit code;  meaningful when kind == 1; -1 on signal/timeout kill */
+    uint32_t        kind;
+    uint32_t        pid;       /* process ID; meaningful when kind == AER_EVENT_STARTED */
+    int32_t         code;      /* exit code;  meaningful when kind == AER_EVENT_EXITED; -1 on kill */
+    uint32_t        _pad;      /* reserved; always zero */
+    uint64_t        seq;       /* chunk sequence number within stream; meaningful when kind == 2 or 3 */
+    const uint8_t  *data;      /* chunk bytes; meaningful when kind == 2 or 3; valid only during callback */
+    size_t          data_len;  /* byte count for data */
 } AerEvent;
 
 /* -------------------------------------------------------------------------
@@ -75,9 +101,19 @@ AerTask *aer_task_new(const char *program,
 AerErrorCode aer_task_with_timeout(AerTask *task, uint64_t timeout_ms);
 
 /**
+ * Enable stdout and stderr capture.
+ *
+ * Must be called before aer_task_run. When enabled, StdoutChunk (kind=2)
+ * and StderrChunk (kind=3) events are delivered to the callback between
+ * Started and Exited. The `data` pointer in those events is only valid
+ * for the duration of the callback; copy the bytes if needed after return.
+ */
+AerErrorCode aer_task_with_capture_output(AerTask *task, bool capture);
+
+/**
  * Spawn the process and block until it exits.
  *
- * `callback`  — called with Started then Exited events; may be NULL to ignore events.
+ * `callback`  — called with Started, optional chunks, then Exited; may be NULL to ignore events.
  * `user_data` — passed through to callback unchanged; may be NULL.
  *               Must remain valid for the duration of this call.
  *

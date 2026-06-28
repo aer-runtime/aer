@@ -1,6 +1,6 @@
-use super::{KillHandle, OsHandle, OsProcess};
+use super::{KillHandle, OsHandle, OsProcess, OutputSinks};
 use crate::AerError;
-use std::io;
+use std::io::{self, Read};
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::thread;
@@ -42,7 +42,7 @@ impl OsProcess for UnixProcess {
         })
     }
 
-    fn wait(handle: OsHandle) -> Result<i32, AerError> {
+    fn wait(handle: OsHandle, sinks: OutputSinks) -> Result<i32, AerError> {
         let OsHandle {
             mut child, kill, ..
         } = handle;
@@ -53,13 +53,43 @@ impl OsProcess for UnixProcess {
         // the drain thread is still blocked on stdout (or vice versa). Both threads
         // must start before child.wait() is called.
         let stdout_drain = child.stdout.take().map(|mut out| {
+            let tx = sinks.stdout;
             thread::spawn(move || {
-                let _ = std::io::copy(&mut out, &mut std::io::sink());
+                if let Some(tx) = tx {
+                    let mut seq = 0u64;
+                    let mut buf = vec![0u8; 8192];
+                    loop {
+                        match out.read(&mut buf) {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => {
+                                let _ = tx.send((seq, buf[..n].to_vec()));
+                                seq += 1;
+                            }
+                        }
+                    }
+                } else {
+                    let _ = io::copy(&mut out, &mut io::sink());
+                }
             })
         });
         let stderr_drain = child.stderr.take().map(|mut err| {
+            let tx = sinks.stderr;
             thread::spawn(move || {
-                let _ = std::io::copy(&mut err, &mut std::io::sink());
+                if let Some(tx) = tx {
+                    let mut seq = 0u64;
+                    let mut buf = vec![0u8; 8192];
+                    loop {
+                        match err.read(&mut buf) {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => {
+                                let _ = tx.send((seq, buf[..n].to_vec()));
+                                seq += 1;
+                            }
+                        }
+                    }
+                } else {
+                    let _ = io::copy(&mut err, &mut io::sink());
+                }
             })
         });
 

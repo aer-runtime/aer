@@ -32,6 +32,7 @@ fn main() {
     task.run(|event| match event {
         Event::Started { pid } => println!("  → Started  (pid {pid})"),
         Event::Exited { code } => println!("  → Exited   (code {code})"),
+        _ => {}
     })
     .expect("task failed");
 

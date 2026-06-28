@@ -19,6 +19,21 @@ fn exit_cmd(code: i32) -> (String, Vec<String>) {
     }
 }
 
+/// Returns a shell invocation that writes `msg` to stderr then exits 0.
+fn stderr_cmd(msg: &str) -> (String, Vec<String>) {
+    #[cfg(target_os = "windows")]
+    {
+        (
+            "cmd".into(),
+            vec!["/c".into(), format!("echo {} 1>&2", msg)],
+        )
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        ("sh".into(), vec!["-c".into(), format!("echo {} >&2", msg)])
+    }
+}
+
 /// Returns a shell invocation that writes N lines to stdout.
 fn noisy_cmd(lines: usize) -> (String, Vec<String>) {
     #[cfg(target_os = "windows")]
@@ -437,4 +452,237 @@ fn ffi_last_error_message_is_null_after_success() {
     );
 
     unsafe { ffi::aer_task_free(task) };
+}
+
+// --- M4b: Observation Tier (Rust API) ---
+
+#[test]
+fn capture_output_collects_stdout_chunks() {
+    let (prog, args) = noisy_cmd(50);
+    let task = Task::new(prog, args).with_capture_output(true);
+    let mut events = Vec::new();
+    let result = task.run(|e| events.push(e));
+
+    assert!(result.is_ok());
+    assert!(matches!(events.first(), Some(Event::Started { .. })));
+    assert!(matches!(events.last(), Some(Event::Exited { code: 0 })));
+
+    let stdout_chunks: Vec<&Event> = events
+        .iter()
+        .filter(|e| matches!(e, Event::StdoutChunk { .. }))
+        .collect();
+    assert!(
+        !stdout_chunks.is_empty(),
+        "expected at least one StdoutChunk"
+    );
+
+    let all_bytes: Vec<u8> = stdout_chunks
+        .iter()
+        .flat_map(|e| {
+            if let Event::StdoutChunk { bytes, .. } = e {
+                bytes.clone()
+            } else {
+                vec![]
+            }
+        })
+        .collect();
+    let text = String::from_utf8_lossy(&all_bytes);
+    assert!(text.contains('1'), "expected output to contain '1'");
+    assert!(text.contains("50"), "expected output to contain '50'");
+
+    // seq monotonically increasing within stdout stream
+    let mut prev_seq: Option<u64> = None;
+    for e in &stdout_chunks {
+        if let Event::StdoutChunk { seq, .. } = e {
+            if let Some(prev) = prev_seq {
+                assert!(
+                    *seq > prev,
+                    "seq must be strictly increasing: got {} after {}",
+                    seq,
+                    prev
+                );
+            }
+            prev_seq = Some(*seq);
+        }
+    }
+}
+
+#[test]
+fn capture_output_off_emits_no_chunks() {
+    let (prog, args) = noisy_cmd(100);
+    let task = Task::new(prog, args); // no with_capture_output
+    let mut events = Vec::new();
+    let result = task.run(|e| events.push(e));
+
+    assert!(result.is_ok());
+    let has_chunks = events
+        .iter()
+        .any(|e| matches!(e, Event::StdoutChunk { .. } | Event::StderrChunk { .. }));
+    assert!(
+        !has_chunks,
+        "chunks must not be emitted without capture enabled"
+    );
+    assert_eq!(events.len(), 2, "only Started and Exited without capture");
+}
+
+#[test]
+fn capture_output_chunks_between_started_and_exited() {
+    let (prog, args) = noisy_cmd(10);
+    let task = Task::new(prog, args).with_capture_output(true);
+    let mut events = Vec::new();
+    let result = task.run(|e| events.push(e));
+
+    assert!(result.is_ok());
+    let started_pos = events
+        .iter()
+        .position(|e| matches!(e, Event::Started { .. }))
+        .unwrap();
+    let exited_pos = events
+        .iter()
+        .position(|e| matches!(e, Event::Exited { .. }))
+        .unwrap();
+
+    for (i, e) in events.iter().enumerate() {
+        if matches!(e, Event::StdoutChunk { .. } | Event::StderrChunk { .. }) {
+            assert!(
+                i > started_pos,
+                "chunk at index {} must follow Started at {}",
+                i,
+                started_pos
+            );
+            assert!(
+                i < exited_pos,
+                "chunk at index {} must precede Exited at {}",
+                i,
+                exited_pos
+            );
+        }
+    }
+}
+
+#[test]
+fn capture_output_collects_stderr_chunks() {
+    let (prog, args) = stderr_cmd("hello_stderr");
+    let task = Task::new(prog, args).with_capture_output(true);
+    let mut events = Vec::new();
+    let result = task.run(|e| events.push(e));
+
+    assert!(result.is_ok());
+
+    let stderr_chunks: Vec<&Event> = events
+        .iter()
+        .filter(|e| matches!(e, Event::StderrChunk { .. }))
+        .collect();
+    assert!(
+        !stderr_chunks.is_empty(),
+        "expected at least one StderrChunk"
+    );
+
+    let all_bytes: Vec<u8> = stderr_chunks
+        .iter()
+        .flat_map(|e| {
+            if let Event::StderrChunk { bytes, .. } = e {
+                bytes.clone()
+            } else {
+                vec![]
+            }
+        })
+        .collect();
+    let text = String::from_utf8_lossy(&all_bytes);
+    assert!(
+        text.contains("hello_stderr"),
+        "expected 'hello_stderr' in stderr chunks, got: {:?}",
+        text
+    );
+}
+
+// --- M4b: Observation Tier (FFI) ---
+
+/// Accumulates captured output bytes during the FFI callback (pointer is only
+/// valid for the duration of the callback, so bytes must be copied immediately).
+struct FfiCaptureData {
+    started_pid: u32,
+    exited_code: i32,
+    stdout_chunks: Vec<Vec<u8>>,
+    stderr_chunks: Vec<Vec<u8>>,
+}
+
+unsafe extern "C" fn collect_ffi_capture(event: *const AerEvent, user_data: *mut c_void) {
+    let data = &mut *(user_data as *mut FfiCaptureData);
+    let e = &*event;
+    match e.kind {
+        0 => data.started_pid = e.pid,
+        1 => data.exited_code = e.code,
+        // Copy bytes immediately — `data` pointer is only valid during the callback
+        2 => data
+            .stdout_chunks
+            .push(std::slice::from_raw_parts(e.data, e.data_len).to_vec()),
+        3 => data
+            .stderr_chunks
+            .push(std::slice::from_raw_parts(e.data, e.data_len).to_vec()),
+        _ => {}
+    }
+}
+
+#[test]
+fn ffi_capture_output_collects_stdout() {
+    let (prog, args) = noisy_cmd(50);
+    let task = ffi_new_task(&prog, &args);
+    assert!(!task.is_null());
+
+    let cap_code = unsafe { ffi::aer_task_with_capture_output(task, true) };
+    assert_eq!(cap_code, AerErrorCode::Ok);
+
+    let mut data = FfiCaptureData {
+        started_pid: 0,
+        exited_code: -999,
+        stdout_chunks: Vec::new(),
+        stderr_chunks: Vec::new(),
+    };
+    let run_code = unsafe {
+        ffi::aer_task_run(
+            task,
+            Some(collect_ffi_capture),
+            &mut data as *mut _ as *mut c_void,
+        )
+    };
+    unsafe { ffi::aer_task_free(task) };
+
+    assert_eq!(run_code, AerErrorCode::Ok);
+    assert!(data.started_pid > 0, "started_pid should be > 0");
+    assert_eq!(data.exited_code, 0);
+    assert!(
+        !data.stdout_chunks.is_empty(),
+        "expected stdout chunks via FFI"
+    );
+
+    let all: Vec<u8> = data.stdout_chunks.into_iter().flatten().collect();
+    let text = String::from_utf8_lossy(&all);
+    assert!(text.contains('1'), "expected output content in chunks");
+}
+
+#[test]
+fn ffi_capture_output_off_emits_no_chunks() {
+    let (prog, args) = noisy_cmd(50);
+    let task = ffi_new_task(&prog, &args);
+    assert!(!task.is_null());
+    // No aer_task_with_capture_output — capture is off by default
+
+    let mut events: Vec<AerEvent> = Vec::new();
+    let run_code = unsafe {
+        ffi::aer_task_run(
+            task,
+            Some(collect_ffi_events),
+            &mut events as *mut _ as *mut c_void,
+        )
+    };
+    unsafe { ffi::aer_task_free(task) };
+
+    assert_eq!(run_code, AerErrorCode::Ok);
+    let has_chunks = events.iter().any(|e| e.kind == 2 || e.kind == 3);
+    assert!(
+        !has_chunks,
+        "no chunks should be emitted without capture enabled"
+    );
+    assert_eq!(events.len(), 2, "only Started and Exited without capture");
 }
