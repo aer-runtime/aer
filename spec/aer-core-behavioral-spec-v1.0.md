@@ -1,3 +1,9 @@
+> **Superseded.** This is the v1.0 spec covering M1–M3. The current authoritative document is
+> [`aer-core-behavioral-spec-v1.1.md`](aer-core-behavioral-spec-v1.1.md), which adds the
+> Observation Tier (M4b), ExitReason (M4c), on-demand cancellation (M4c), and the FFI boundary (M4).
+
+---
+
 # AER Behavioral Specification — v1.0
 
 This document is the authoritative definition of what AER guarantees. Code is derived from this; this is not derived from code.
