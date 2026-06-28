@@ -1,4 +1,4 @@
-use crate::{AerError, Event, Task};
+use crate::{AerError, CancelHandle, Event, Task};
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::panic::AssertUnwindSafe;
 use std::time::Duration;
@@ -39,6 +39,7 @@ fn map_aer_error(e: AerError) -> AerErrorCode {
         AerError::InvalidStateTransition { .. } => AerErrorCode::InvalidStateTransition,
         AerError::TimedOut => AerErrorCode::TimedOut,
         AerError::KillFailed(_) => AerErrorCode::KillFailed,
+        AerError::Cancelled => AerErrorCode::Cancelled,
     }
 }
 
@@ -57,35 +58,41 @@ pub enum AerErrorCode {
     AlreadyRun = 7,
     /// An unexpected panic was caught at the FFI boundary.
     Panic = 8,
+    /// The process was killed by an explicit cancel request.
+    Cancelled = 9,
 }
 
 /// C-compatible event delivered to AerEventCallback.
 ///
 /// `kind` selects which fields are valid:
 ///   0 = Started  — `pid` is the process ID
-///   1 = Exited   — `code` is the exit code (-1 if killed without a code)
+///   1 = Exited   — `code` is the exit code (-1 if killed), `reason` is AerExitReason
 ///   2 = StdoutChunk — `seq`, `data`, `data_len` are valid; only when capture enabled
 ///   3 = StderrChunk — `seq`, `data`, `data_len` are valid; only when capture enabled
 ///
 /// For chunk kinds, `data` points into Rust-owned memory that is only valid for
 /// the duration of the callback. Copy the bytes before the callback returns.
+///
+/// Layout (64-bit targets):
+///   offset  0: kind      u32
+///   offset  4: pid       u32
+///   offset  8: code      i32
+///   offset 12: reason    u32   — AerExitReason when kind == 1, else 0
+///   offset 16: seq       u64
+///   offset 24: data      *const u8
+///   offset 32: data_len  usize
+///   total: 40 bytes
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct AerEvent {
     pub kind: u32,
     pub pid: u32,        // valid when kind == 0
     pub code: i32,       // valid when kind == 1
-    pub _pad: u32,       // explicit padding; keeps seq aligned to 8 bytes on all targets
+    pub reason: u32,     // AerExitReason when kind == 1; 0 otherwise
     pub seq: u64,        // valid when kind == 2 or 3; monotonically increasing within stream
     pub data: *const u8, // valid when kind == 2 or 3; only valid during the callback
     pub data_len: usize, // byte count for data
 }
-
-// SAFETY: AerEvent is only passed by pointer to C callbacks, never moved across
-// threads by Rust. Implementing Send/Sync here is needed only if the struct
-// were put in a thread-safe container, which we never do.
-// Raw pointer fields make the compiler's auto-impl conservative; the pointer is
-// used as a read-only view into a local Vec<u8> valid only during the callback.
 
 /// Nullable C function pointer for receiving events. Pass NULL to ignore events.
 pub type AerEventCallback = Option<unsafe extern "C" fn(*const AerEvent, *mut c_void)>;
@@ -96,7 +103,13 @@ pub struct AerTask {
     // take() → with_timeout() / with_capture_output() → put back.
     inner: Option<Task>,
     has_run: bool,
+    // Populated by aer_task_make_cancel_handle; used by aer_task_run.
+    cancel: Option<CancelHandle>,
 }
+
+/// Opaque cancellation handle. Create with aer_task_make_cancel_handle;
+/// free with aer_cancel_free.
+pub struct AerCancelHandle(CancelHandle);
 
 /// Create a new task. Returns NULL on null/invalid-UTF-8 program or any null arg.
 ///
@@ -143,6 +156,7 @@ pub unsafe extern "C" fn aer_task_new(
         Box::into_raw(Box::new(AerTask {
             inner: Some(task),
             has_run: false,
+            cancel: None,
         }))
     }) {
         Ok(ptr) => ptr,
@@ -191,7 +205,7 @@ pub unsafe extern "C" fn aer_task_with_timeout(
 ///
 /// When enabled, StdoutChunk (kind=2) and StderrChunk (kind=3) events are delivered
 /// to the callback between Started and Exited. The `data` pointer in those events
-/// is only valid for the duration of the callback; copy the bytes if needed later.
+/// is only valid for the duration of the callback; copy the bytes if needed after return.
 ///
 /// # Safety
 /// `task` must be a valid pointer returned by aer_task_new that has not been freed.
@@ -225,6 +239,79 @@ pub unsafe extern "C" fn aer_task_with_capture_output(
     }
 }
 
+/// Create a cancellation handle for this task.
+///
+/// Must be called before aer_task_run. The returned handle can be passed to
+/// aer_cancel() from any thread at any time to cancel the running execution.
+/// The handle is independent of the task handle — free it with aer_cancel_free
+/// after the task has completed (or whenever it's no longer needed).
+///
+/// Returns NULL on memory allocation failure or if `task` is NULL.
+///
+/// # Safety
+/// `task` must be a valid pointer returned by aer_task_new that has not been freed.
+#[no_mangle]
+pub unsafe extern "C" fn aer_task_make_cancel_handle(task: *mut AerTask) -> *mut AerCancelHandle {
+    match std::panic::catch_unwind(AssertUnwindSafe(|| {
+        if task.is_null() {
+            return std::ptr::null_mut();
+        }
+        let t = unsafe { &mut *task };
+        let cancel = CancelHandle::new();
+        // Clone into the task so aer_task_run can call run_with_cancel
+        t.cancel = Some(cancel.clone());
+        Box::into_raw(Box::new(AerCancelHandle(cancel)))
+    })) {
+        Ok(ptr) => ptr,
+        Err(e) => {
+            set_last_error(format_panic(e));
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Cancel a running task. Kills the process tree immediately.
+///
+/// Safe to call before the process starts, after it exits, or concurrently
+/// from multiple threads. Only the first call has effect; subsequent calls
+/// are no-ops and return AER_OK.
+///
+/// # Safety
+/// `cancel` must be a valid pointer returned by aer_task_make_cancel_handle, or NULL.
+#[no_mangle]
+pub unsafe extern "C" fn aer_cancel(cancel: *mut AerCancelHandle) -> AerErrorCode {
+    match std::panic::catch_unwind(AssertUnwindSafe(|| {
+        if cancel.is_null() {
+            return AerErrorCode::NullPointer;
+        }
+        let c = unsafe { &*cancel };
+        c.0.cancel();
+        clear_last_error();
+        AerErrorCode::Ok
+    })) {
+        Ok(code) => code,
+        Err(e) => {
+            set_last_error(format_panic(e));
+            AerErrorCode::Panic
+        }
+    }
+}
+
+/// Free a cancel handle. Safe to call with NULL (no-op).
+///
+/// # Safety
+/// `cancel` must be a valid pointer returned by aer_task_make_cancel_handle, or NULL.
+/// Do not use the handle after this call.
+#[no_mangle]
+pub unsafe extern "C" fn aer_cancel_free(cancel: *mut AerCancelHandle) {
+    if cancel.is_null() {
+        return;
+    }
+    let _ = std::panic::catch_unwind(|| {
+        drop(unsafe { Box::from_raw(cancel) });
+    });
+}
+
 /// Run the task. May only be called once per handle.
 ///
 /// `callback` may be NULL to ignore events.
@@ -256,7 +343,7 @@ pub unsafe extern "C" fn aer_task_run(
             None => return AerErrorCode::AlreadyRun,
         };
 
-        let result = inner.run(|event| {
+        let on_event = |event: Event| {
             if let Some(cb) = callback {
                 match event {
                     Event::Started { pid } => {
@@ -264,19 +351,19 @@ pub unsafe extern "C" fn aer_task_run(
                             kind: 0,
                             pid,
                             code: 0,
-                            _pad: 0,
+                            reason: 0,
                             seq: 0,
                             data: std::ptr::null(),
                             data_len: 0,
                         };
                         unsafe { cb(&c_event as *const AerEvent, user_data) };
                     }
-                    Event::Exited { code } => {
+                    Event::Exited { code, reason } => {
                         let c_event = AerEvent {
                             kind: 1,
                             pid: 0,
                             code,
-                            _pad: 0,
+                            reason: reason as u32,
                             seq: 0,
                             data: std::ptr::null(),
                             data_len: 0,
@@ -288,7 +375,7 @@ pub unsafe extern "C" fn aer_task_run(
                             kind: 2,
                             pid: 0,
                             code: 0,
-                            _pad: 0,
+                            reason: 0,
                             seq,
                             data: bytes.as_ptr(),
                             data_len: bytes.len(),
@@ -301,7 +388,7 @@ pub unsafe extern "C" fn aer_task_run(
                             kind: 3,
                             pid: 0,
                             code: 0,
-                            _pad: 0,
+                            reason: 0,
                             seq,
                             data: bytes.as_ptr(),
                             data_len: bytes.len(),
@@ -310,7 +397,13 @@ pub unsafe extern "C" fn aer_task_run(
                     }
                 }
             }
-        });
+        };
+
+        let result = if let Some(ref cancel) = t.cancel {
+            inner.run_with_cancel(on_event, cancel)
+        } else {
+            inner.run(on_event)
+        };
 
         match result {
             Ok(()) => {

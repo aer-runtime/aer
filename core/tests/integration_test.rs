@@ -1,6 +1,6 @@
 use aer_core::{
     ffi::{self, AerErrorCode, AerEvent},
-    AerError, Event, Task,
+    AerError, CancelHandle, Event, ExitReason, Task,
 };
 use std::ffi::{c_void, CStr, CString};
 use std::fs;
@@ -105,7 +105,7 @@ fn exit_zero_emits_started_then_exited() {
     assert!(result.is_ok());
     assert_eq!(events.len(), 2);
     assert!(matches!(events[0], Event::Started { pid } if pid > 0));
-    assert!(matches!(events[1], Event::Exited { code: 0 }));
+    assert!(matches!(events[1], Event::Exited { code: 0, .. }));
 }
 
 #[test]
@@ -114,7 +114,7 @@ fn nonzero_exit_code_is_captured() {
     let (result, events) = collect_events(&prog, args);
 
     assert!(result.is_ok());
-    assert!(matches!(events[1], Event::Exited { code: 42 }));
+    assert!(matches!(events[1], Event::Exited { code: 42, .. }));
 }
 
 #[test]
@@ -157,7 +157,7 @@ fn large_output_does_not_deadlock() {
         "large output caused deadlock or error: {:?}",
         result
     );
-    assert!(matches!(events[1], Event::Exited { code: 0 }));
+    assert!(matches!(events[1], Event::Exited { code: 0, .. }));
 }
 
 // --- M2: Timeout & Kill Escalation ---
@@ -174,7 +174,7 @@ fn timeout_kills_slow_process() {
     );
     assert_eq!(events.len(), 2, "expected Started + Exited even on timeout");
     assert!(matches!(events[0], Event::Started { pid } if pid > 0));
-    assert!(matches!(events[1], Event::Exited { code: -1 }));
+    assert!(matches!(events[1], Event::Exited { code: -1, .. }));
 }
 
 #[test]
@@ -185,7 +185,7 @@ fn no_timeout_set_runs_normally() {
 
     assert!(result.is_ok());
     assert_eq!(events.len(), 2);
-    assert!(matches!(events[1], Event::Exited { code: 0 }));
+    assert!(matches!(events[1], Event::Exited { code: 0, .. }));
 }
 
 #[test]
@@ -199,7 +199,7 @@ fn timeout_does_not_fire_for_fast_process() {
         "expected Ok for fast process with long timeout, got {:?}",
         result
     );
-    assert!(matches!(events[1], Event::Exited { code: 0 }));
+    assert!(matches!(events[1], Event::Exited { code: 0, .. }));
 }
 
 // --- M3: Process Tree Cleanup ---
@@ -465,7 +465,7 @@ fn capture_output_collects_stdout_chunks() {
 
     assert!(result.is_ok());
     assert!(matches!(events.first(), Some(Event::Started { .. })));
-    assert!(matches!(events.last(), Some(Event::Exited { code: 0 })));
+    assert!(matches!(events.last(), Some(Event::Exited { code: 0, .. })));
 
     let stdout_chunks: Vec<&Event> = events
         .iter()
@@ -685,4 +685,227 @@ fn ffi_capture_output_off_emits_no_chunks() {
         "no chunks should be emitted without capture enabled"
     );
     assert_eq!(events.len(), 2, "only Started and Exited without capture");
+}
+
+// --- M4c: Cancellation and ExitReason (Rust API) ---
+
+#[test]
+fn exit_reason_natural_on_clean_exit() {
+    let (prog, args) = exit_cmd(0);
+    let task = Task::new(prog, args);
+    let mut events = Vec::new();
+    let result = task.run(|e| events.push(e));
+
+    assert!(result.is_ok());
+    assert!(
+        matches!(
+            events.last(),
+            Some(Event::Exited {
+                reason: ExitReason::NaturalExit,
+                ..
+            })
+        ),
+        "expected NaturalExit, got {:?}",
+        events.last()
+    );
+}
+
+#[test]
+fn exit_reason_timed_out_on_timeout() {
+    let (prog, args) = sleep_cmd(60);
+    let task = Task::new(prog, args).with_timeout(Duration::from_secs(1));
+    let mut events = Vec::new();
+    let result = task.run(|e| events.push(e));
+
+    assert!(matches!(result, Err(AerError::TimedOut)));
+    assert!(
+        matches!(
+            events.last(),
+            Some(Event::Exited {
+                reason: ExitReason::TimedOut,
+                ..
+            })
+        ),
+        "expected TimedOut reason, got {:?}",
+        events.last()
+    );
+}
+
+#[test]
+fn cancel_kills_running_process() {
+    let (prog, args) = sleep_cmd(60);
+    let task = Task::new(prog, args);
+    let cancel = CancelHandle::new();
+    let cancel_clone = cancel.clone();
+
+    let cancel_thread = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(300));
+        cancel_clone.cancel();
+    });
+
+    let mut events = Vec::new();
+    let result = task.run_with_cancel(|e| events.push(e), &cancel);
+    cancel_thread.join().unwrap();
+
+    assert!(
+        matches!(result, Err(AerError::Cancelled)),
+        "expected Cancelled, got {:?}",
+        result
+    );
+    assert_eq!(events.len(), 2, "expected Started + Exited");
+    assert!(matches!(events[0], Event::Started { .. }));
+    assert!(
+        matches!(
+            events[1],
+            Event::Exited {
+                code: -1,
+                reason: ExitReason::CancelRequested
+            }
+        ),
+        "expected CancelRequested Exited, got {:?}",
+        events[1]
+    );
+}
+
+#[test]
+fn cancel_after_exit_is_noop() {
+    // cancel() called after the process has already exited must not affect the
+    // exit reason — the process should be reported as NaturalExit.
+    let (prog, args) = exit_cmd(0);
+    let task = Task::new(prog, args);
+    let cancel = CancelHandle::new();
+
+    let mut events = Vec::new();
+    let result = task.run_with_cancel(|e| events.push(e), &cancel);
+
+    // Process already exited; cancel now is a no-op
+    cancel.cancel();
+
+    assert!(result.is_ok(), "expected Ok, got {:?}", result);
+    assert!(
+        matches!(
+            events.last(),
+            Some(Event::Exited {
+                reason: ExitReason::NaturalExit,
+                ..
+            })
+        ),
+        "cancel after exit must not change reason, got {:?}",
+        events.last()
+    );
+}
+
+#[test]
+fn cancel_is_idempotent() {
+    let (prog, args) = sleep_cmd(60);
+    let task = Task::new(prog, args);
+    let cancel = CancelHandle::new();
+    let cancel_clone = cancel.clone();
+
+    let cancel_thread = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(200));
+        cancel_clone.cancel();
+        cancel_clone.cancel(); // second call must not panic or error
+        cancel_clone.cancel();
+    });
+
+    let result = task.run_with_cancel(|_| {}, &cancel);
+    cancel_thread.join().unwrap();
+
+    assert!(matches!(result, Err(AerError::Cancelled)));
+}
+
+// --- M4c: Cancellation and ExitReason (FFI) ---
+
+#[test]
+fn ffi_exit_reason_natural_on_clean_exit() {
+    let (prog, args) = exit_cmd(0);
+    let task = ffi_new_task(&prog, &args);
+    assert!(!task.is_null());
+
+    let mut events: Vec<AerEvent> = Vec::new();
+    let code = unsafe {
+        ffi::aer_task_run(
+            task,
+            Some(collect_ffi_events),
+            &mut events as *mut _ as *mut c_void,
+        )
+    };
+    unsafe { ffi::aer_task_free(task) };
+
+    assert_eq!(code, AerErrorCode::Ok);
+    let exited = events.iter().find(|e| e.kind == 1).unwrap();
+    assert_eq!(exited.reason, 0, "expected AER_EXIT_NATURAL (0)");
+}
+
+#[test]
+fn ffi_exit_reason_timed_out() {
+    let (prog, args) = sleep_cmd(60);
+    let task = ffi_new_task(&prog, &args);
+    assert!(!task.is_null());
+
+    let to_code = unsafe { ffi::aer_task_with_timeout(task, 1000) };
+    assert_eq!(to_code, AerErrorCode::Ok);
+
+    let mut events: Vec<AerEvent> = Vec::new();
+    let run_code = unsafe {
+        ffi::aer_task_run(
+            task,
+            Some(collect_ffi_events),
+            &mut events as *mut _ as *mut c_void,
+        )
+    };
+    unsafe { ffi::aer_task_free(task) };
+
+    assert_eq!(run_code, AerErrorCode::TimedOut);
+    let exited = events.iter().find(|e| e.kind == 1).unwrap();
+    assert_eq!(exited.reason, 1, "expected AER_EXIT_TIMED_OUT (1)");
+    assert_eq!(exited.code, -1);
+}
+
+#[test]
+fn ffi_cancel_kills_process() {
+    let (prog, args) = sleep_cmd(60);
+    let task = ffi_new_task(&prog, &args);
+    assert!(!task.is_null());
+
+    let cancel = unsafe { ffi::aer_task_make_cancel_handle(task) };
+    assert!(!cancel.is_null());
+
+    // Cancel from a separate thread after a brief delay
+    let cancel_copy = cancel as usize; // raw pointer as usize for Send
+    let cancel_thread = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(300));
+        let cancel_ptr = cancel_copy as *mut ffi::AerCancelHandle;
+        unsafe { ffi::aer_cancel(cancel_ptr) }
+    });
+
+    let mut events: Vec<AerEvent> = Vec::new();
+    let run_code = unsafe {
+        ffi::aer_task_run(
+            task,
+            Some(collect_ffi_events),
+            &mut events as *mut _ as *mut c_void,
+        )
+    };
+    let cancel_result = cancel_thread.join().unwrap();
+    unsafe { ffi::aer_cancel_free(cancel) };
+    unsafe { ffi::aer_task_free(task) };
+
+    assert_eq!(cancel_result, AerErrorCode::Ok);
+    assert_eq!(run_code, AerErrorCode::Cancelled);
+    let exited = events.iter().find(|e| e.kind == 1).unwrap();
+    assert_eq!(exited.reason, 2, "expected AER_EXIT_CANCEL_REQUESTED (2)");
+    assert_eq!(exited.code, -1);
+}
+
+#[test]
+fn ffi_cancel_null_returns_null_pointer() {
+    let code = unsafe { ffi::aer_cancel(std::ptr::null_mut()) };
+    assert_eq!(code, AerErrorCode::NullPointer);
+}
+
+#[test]
+fn ffi_cancel_free_null_is_noop() {
+    unsafe { ffi::aer_cancel_free(std::ptr::null_mut()) };
 }

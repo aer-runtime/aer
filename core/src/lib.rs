@@ -4,9 +4,9 @@ mod machine;
 mod os;
 mod task;
 
-pub use event::Event;
+pub use event::{Event, ExitReason};
 pub use machine::State;
-pub use task::Task;
+pub use task::{CancelHandle, Task};
 
 use machine::State as MachineState;
 use std::fmt;
@@ -29,6 +29,8 @@ pub enum AerError {
     TimedOut,
     /// The kill attempt itself failed (e.g. the process already exited by the time kill was sent).
     KillFailed(io::Error),
+    /// The process was killed by an explicit cancel request.
+    Cancelled,
 }
 
 impl fmt::Display for AerError {
@@ -41,6 +43,7 @@ impl fmt::Display for AerError {
             }
             AerError::TimedOut => write!(f, "process timed out and was killed"),
             AerError::KillFailed(e) => write!(f, "kill attempt failed: {}", e),
+            AerError::Cancelled => write!(f, "process was cancelled"),
         }
     }
 }
@@ -49,7 +52,9 @@ impl std::error::Error for AerError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             AerError::SpawnFailed(e) | AerError::WaitFailed(e) | AerError::KillFailed(e) => Some(e),
-            AerError::InvalidStateTransition { .. } | AerError::TimedOut => None,
+            AerError::InvalidStateTransition { .. } | AerError::TimedOut | AerError::Cancelled => {
+                None
+            }
         }
     }
 }

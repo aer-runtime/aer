@@ -21,7 +21,7 @@ fn main() {
 
     match slow.run(|event| match event {
         Event::Started { pid } => println!("  → Started  (pid {pid})"),
-        Event::Exited { code } => println!("  → Exited   (code {code})"),
+        Event::Exited { code, .. } => println!("  → Exited   (code {code})"),
         _ => {}
     }) {
         Err(AerError::TimedOut) => println!("  → TimedOut\n"),
@@ -40,7 +40,7 @@ fn main() {
 
     match fast.run(|event| match event {
         Event::Started { pid } => println!("  → Started  (pid {pid})"),
-        Event::Exited { code } => println!("  → Exited   (code {code})"),
+        Event::Exited { code, .. } => println!("  → Exited   (code {code})"),
         _ => {}
     }) {
         Ok(()) => println!("  → Completed normally"),

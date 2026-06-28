@@ -23,6 +23,7 @@ typedef enum {
     AER_ERR_KILL_FAILED = 6,          /* kill attempt itself failed */
     AER_ERR_ALREADY_RUN = 7,          /* aer_task_run called more than once */
     AER_ERR_PANIC = 8,                /* unexpected internal panic (see aer_last_error_message) */
+    AER_ERR_CANCELLED = 9,            /* process was killed by an explicit cancel request */
 } AerErrorCode;
 
 /* -------------------------------------------------------------------------
@@ -30,9 +31,20 @@ typedef enum {
  * Matches the `kind` field in AerEvent.
  * ------------------------------------------------------------------------- */
 #define AER_EVENT_STARTED       0u  /* pid field valid */
-#define AER_EVENT_EXITED        1u  /* code field valid */
+#define AER_EVENT_EXITED        1u  /* code and reason fields valid */
 #define AER_EVENT_STDOUT_CHUNK  2u  /* seq, data, data_len valid; only with capture enabled */
 #define AER_EVENT_STDERR_CHUNK  3u  /* seq, data, data_len valid; only with capture enabled */
+
+/* -------------------------------------------------------------------------
+ * Exit reason
+ * Delivered in the `reason` field of an AER_EVENT_EXITED event.
+ * The integer values are stable ABI — never reorder or renumber them.
+ * ------------------------------------------------------------------------- */
+typedef enum {
+    AER_EXIT_NATURAL        = 0,  /* process exited on its own */
+    AER_EXIT_TIMED_OUT      = 1,  /* killed because the configured timeout elapsed */
+    AER_EXIT_CANCEL_REQUESTED = 2, /* killed by an explicit aer_cancel() call */
+} AerExitReason;
 
 /* -------------------------------------------------------------------------
  * Event
@@ -42,7 +54,7 @@ typedef enum {
  *   offset  0: kind      uint32_t
  *   offset  4: pid       uint32_t
  *   offset  8: code      int32_t
- *   offset 12: _pad      uint32_t   (reserved; always 0)
+ *   offset 12: reason    uint32_t   — AerExitReason when kind == AER_EVENT_EXITED, else 0
  *   offset 16: seq       uint64_t
  *   offset 24: data      const uint8_t *
  *   offset 32: data_len  size_t
@@ -54,8 +66,8 @@ typedef enum {
 typedef struct {
     uint32_t        kind;
     uint32_t        pid;       /* process ID; meaningful when kind == AER_EVENT_STARTED */
-    int32_t         code;      /* exit code;  meaningful when kind == AER_EVENT_EXITED; -1 on kill */
-    uint32_t        _pad;      /* reserved; always zero */
+    int32_t         code;      /* exit code; meaningful when kind == AER_EVENT_EXITED; -1 on kill */
+    uint32_t        reason;    /* AerExitReason; meaningful when kind == AER_EVENT_EXITED */
     uint64_t        seq;       /* chunk sequence number within stream; meaningful when kind == 2 or 3 */
     const uint8_t  *data;      /* chunk bytes; meaningful when kind == 2 or 3; valid only during callback */
     size_t          data_len;  /* byte count for data */
@@ -67,6 +79,13 @@ typedef struct {
  * Do not share a single handle across threads without external synchronisation.
  * ------------------------------------------------------------------------- */
 typedef struct AerTask AerTask;
+
+/* -------------------------------------------------------------------------
+ * Cancel handle (opaque handle)
+ * Create with aer_task_make_cancel_handle; free with aer_cancel_free.
+ * Thread-safe: may be called from any thread at any time.
+ * ------------------------------------------------------------------------- */
+typedef struct AerCancelHandle AerCancelHandle;
 
 /* -------------------------------------------------------------------------
  * Event callback
@@ -111,6 +130,17 @@ AerErrorCode aer_task_with_timeout(AerTask *task, uint64_t timeout_ms);
 AerErrorCode aer_task_with_capture_output(AerTask *task, bool capture);
 
 /**
+ * Create a cancellation handle for this task.
+ *
+ * Must be called before aer_task_run. The returned handle is independent of
+ * the task handle and must be freed separately with aer_cancel_free.
+ * Pass the handle to aer_cancel() from any thread to cancel the execution.
+ *
+ * Returns NULL if task is NULL or on allocation failure.
+ */
+AerCancelHandle *aer_task_make_cancel_handle(AerTask *task);
+
+/**
  * Spawn the process and block until it exits.
  *
  * `callback`  — called with Started, optional chunks, then Exited; may be NULL to ignore events.
@@ -129,6 +159,24 @@ AerErrorCode aer_task_run(AerTask *task,
  * Do not use the handle after this call.
  */
 void aer_task_free(AerTask *task);
+
+/**
+ * Cancel a running task. Kills the process tree immediately.
+ *
+ * Safe to call before the process starts, after it exits, or from multiple
+ * threads concurrently. Only the first call has effect; subsequent calls
+ * return AER_OK without error.
+ *
+ * When the cancellation takes effect, aer_task_run returns AER_ERR_CANCELLED
+ * and the Exited event has reason == AER_EXIT_CANCEL_REQUESTED.
+ */
+AerErrorCode aer_cancel(AerCancelHandle *cancel);
+
+/**
+ * Free a cancel handle. Safe to call with NULL (no-op).
+ * Do not use the handle after this call.
+ */
+void aer_cancel_free(AerCancelHandle *cancel);
 
 /**
  * Return the last error message for this thread as a null-terminated C string.

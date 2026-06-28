@@ -1,15 +1,71 @@
 use crate::{
-    event::Event,
+    event::{Event, ExitReason},
     machine::{State, StateMachine},
-    os::{OsProcess, OutputSinks, PlatformProcess},
+    os::{KillHandle, OsProcess, OutputSinks, PlatformProcess},
     AerError,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
 const KILL_GRACE: Duration = Duration::from_secs(5);
+
+/// A handle that allows an external caller to cancel a running task.
+///
+/// Obtained before `run_with_cancel` is called. The handle can be cloned and
+/// shared across threads. Calling `cancel()` is idempotent — only the first
+/// call has effect. Calling `cancel()` before the process has started or after
+/// it has already exited is safe and has no effect on the reported exit reason.
+#[derive(Clone)]
+pub struct CancelHandle {
+    /// Set true the first time cancel() is called.
+    cancelled: Arc<AtomicBool>,
+    /// Set true only when cancel() actually fired a kill while the process was live.
+    /// Used by run_impl to determine whether exit reason is CancelRequested.
+    kill_fired: Arc<AtomicBool>,
+    /// Non-None only between spawn and wait() returning. Mutex guards concurrent cancel().
+    kill: Arc<Mutex<Option<KillHandle>>>,
+}
+
+impl Default for CancelHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CancelHandle {
+    pub fn new() -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+            kill_fired: Arc::new(AtomicBool::new(false)),
+            kill: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Request cancellation. If the process is running, it is killed immediately
+    /// using the same escalation as a timeout kill. If the process has not started
+    /// yet or has already exited, this is a no-op (the exit reason is unaffected).
+    ///
+    /// Thread-safe. Only the first call has effect; subsequent calls are no-ops.
+    pub fn cancel(&self) {
+        if !self.cancelled.swap(true, Ordering::SeqCst) {
+            if let Ok(guard) = self.kill.lock() {
+                if let Some(kill) = guard.as_ref() {
+                    self.kill_fired.store(true, Ordering::SeqCst);
+                    let _ = PlatformProcess::kill_escalating(kill.clone(), KILL_GRACE);
+                }
+                // kill is None: called before spawn or after wait() returned.
+                // kill_fired stays false; run_impl will not report CancelRequested.
+            }
+        }
+    }
+
+    /// Returns true if `cancel()` has been called at least once.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+}
 
 /// A single-shot task: one command, one execution, deterministic lifecycle.
 pub struct Task {
@@ -30,8 +86,7 @@ impl Task {
     }
 
     /// Sets a maximum wall-clock duration for the process. If the process has not
-    /// exited by the deadline, it is killed via platform-appropriate escalation
-    /// and `run()` returns `Err(AerError::TimedOut)`.
+    /// exited by the deadline, it is killed and `run()` returns `Err(AerError::TimedOut)`.
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = Some(timeout);
         self
@@ -46,13 +101,28 @@ impl Task {
 
     /// Spawns the process and blocks until it exits.
     ///
-    /// Calls `on_event` with `Started` then `Exited` on every execution.
-    /// When `capture_output` is true, `StdoutChunk` and `StderrChunk` events
-    /// are emitted in between (stdout stream first, then stderr stream).
+    /// Events emitted: `Started`, optional chunks (when capture enabled), then `Exited`.
     /// If spawning fails, `on_event` is never called and `SpawnFailed` is returned.
-    /// If a timeout was set and fires, `Exited` is still called before returning
-    /// `Err(AerError::TimedOut)`.
-    pub fn run(&self, mut on_event: impl FnMut(Event)) -> Result<(), AerError> {
+    pub fn run(&self, on_event: impl FnMut(Event)) -> Result<(), AerError> {
+        self.run_impl(on_event, None)
+    }
+
+    /// Like `run`, but wires up a `CancelHandle` so an external caller can cancel
+    /// the execution mid-flight. If cancelled, `Exited { reason: CancelRequested,
+    /// code: -1 }` is emitted and `Err(AerError::Cancelled)` is returned.
+    pub fn run_with_cancel<F: FnMut(Event)>(
+        &self,
+        on_event: F,
+        cancel: &CancelHandle,
+    ) -> Result<(), AerError> {
+        self.run_impl(on_event, Some(cancel))
+    }
+
+    fn run_impl<F: FnMut(Event)>(
+        &self,
+        mut on_event: F,
+        cancel: Option<&CancelHandle>,
+    ) -> Result<(), AerError> {
         let mut machine = StateMachine::new();
 
         let str_args: Vec<&str> = self.args.iter().map(String::as_str).collect();
@@ -62,15 +132,18 @@ impl Task {
         machine.transition(State::Running)?;
         on_event(Event::Started { pid });
 
-        // If a timeout is configured, spawn a monitor thread that kills the process
-        // tree after the deadline. The main thread cancels it by sending on `cancel_tx`
-        // once wait() returns. The `timed_out` flag distinguishes a timeout kill
-        // from a natural exit.
-        //
-        // The KillHandle is cloned ONLY when the monitor thread is spawned. This
-        // ensures wait() holds the sole Arc reference in the no-timeout path, so
-        // drop(kill) inside wait() fires CloseHandle (Windows) immediately after
-        // the root exits — unblocking any grandchildren that hold inherited pipes.
+        // Wire the cancel handle to the live kill handle so cancel() can reach the process.
+        // Also handle the case where cancel() was called before spawn completed:
+        // in that case the flag is set but kill_fired is false; do the kill now.
+        if let Some(ch) = cancel {
+            *ch.kill.lock().unwrap() = Some(handle.kill.clone());
+            if ch.cancelled.load(Ordering::SeqCst) && !ch.kill_fired.load(Ordering::SeqCst) {
+                ch.kill_fired.store(true, Ordering::SeqCst);
+                let _ = PlatformProcess::kill_escalating(handle.kill.clone(), KILL_GRACE);
+            }
+        }
+
+        // Timeout monitor thread: kills the process tree after the deadline.
         let timed_out = Arc::new(AtomicBool::new(false));
         let (cancel_tx, cancel_rx) = mpsc::channel::<()>();
 
@@ -108,19 +181,35 @@ impl Task {
         };
 
         let os_code = PlatformProcess::wait(handle, sinks)?;
-        let _ = cancel_tx.send(()); // wake monitor early if process exited before timeout
+
+        // Disconnect the kill handle: process is dead, cancel() is now a no-op.
+        if let Some(ch) = cancel {
+            *ch.kill.lock().unwrap() = None;
+        }
+
+        let _ = cancel_tx.send(());
 
         let was_timed_out = timed_out.load(Ordering::SeqCst);
-        // Enforce the spec: timeout kills always report code -1 regardless of what
-        // the OS returns (TerminateProcess on Windows sets an explicit exit code;
-        // SIGKILL on Unix produces no code at all). The caller learns the real reason
-        // from the Err(TimedOut) return value, not from the exit code.
-        let code = if was_timed_out { -1 } else { os_code };
+        // kill_fired is true only if cancel() actually killed the process while live.
+        let was_cancelled = cancel
+            .map(|ch| ch.kill_fired.load(Ordering::SeqCst))
+            .unwrap_or(false);
 
-        // Drain captured output and emit chunk events between Started and Exited.
-        // wait() blocks until drain threads complete, so both receivers are fully
-        // populated by the time we read them here. Stdout stream is emitted first;
-        // the spec makes no cross-stream ordering guarantee.
+        let reason = if was_timed_out {
+            ExitReason::TimedOut
+        } else if was_cancelled {
+            ExitReason::CancelRequested
+        } else {
+            ExitReason::NaturalExit
+        };
+
+        let code = if was_timed_out || was_cancelled {
+            -1
+        } else {
+            os_code
+        };
+
+        // Drain captured output: emitted between Started and Exited.
         if let Some(rx) = stdout_rx {
             for (seq, bytes) in rx {
                 on_event(Event::StdoutChunk { seq, bytes });
@@ -133,10 +222,13 @@ impl Task {
         }
 
         machine.transition(State::Exited)?;
-        on_event(Event::Exited { code });
+        on_event(Event::Exited { code, reason });
 
         if was_timed_out {
             return Err(AerError::TimedOut);
+        }
+        if was_cancelled {
+            return Err(AerError::Cancelled);
         }
 
         Ok(())
