@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.0](https://github.com/aer-runtime/aer/compare/core-v0.3.0...core-v0.4.0) (2026-06-28)
+
+
+### Features
+
+* **core:** M4 FFI boundary — C-compatible ABI ([#43](https://github.com/aer-runtime/aer/issues/43)) ([d44ad57](https://github.com/aer-runtime/aer/commit/d44ad57380af1aa50de3dfa658a82a1a005bd936))
+* **core:** M4b — Observation Tier (StdoutChunk/StderrChunk capture) ([#47](https://github.com/aer-runtime/aer/issues/47)) ([259060f](https://github.com/aer-runtime/aer/commit/259060f7635a27ae9ebd2b79e51fe61dc767c473)), closes [#44](https://github.com/aer-runtime/aer/issues/44)
+* **core:** M4c — Cancellation and ExitReason ([#48](https://github.com/aer-runtime/aer/issues/48)) ([8d32071](https://github.com/aer-runtime/aer/commit/8d3207173593a9ff5671576de1fc56dc93e626a6)), closes [#45](https://github.com/aer-runtime/aer/issues/45)
+
+
+### Documentation
+
+* **examples:** Add capture and cancel examples for M4b/M4c ([#50](https://github.com/aer-runtime/aer/issues/50)) ([e8af587](https://github.com/aer-runtime/aer/commit/e8af587f91c854a8361ac8a9a40e274b5849411c)), closes [#49](https://github.com/aer-runtime/aer/issues/49)
+
 ## [0.3.0](https://github.com/aer-runtime/aer/compare/core-v0.2.0...core-v0.3.0) (2026-06-26)
 
 
