@@ -1,10 +1,9 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "packages": {
-    "core": {
+    ".": {
       "release-type": "rust",
-      "component": "core",
-      "path": "core",
+      "path": ".",
       "changelog-sections": [
         { "type": "feat", "section": "Features" },
         { "type": "fix", "section": "Bug Fixes" },
