@@ -1,5 +1,61 @@
 # Changelog
 
+## [0.5.0](https://github.com/aer-works/aer-core/compare/aer-core-v0.4.0...aer-core-v0.5.0) (2026-06-29)
+
+
+### Features
+
+* **core:** M4 FFI boundary — C-compatible ABI ([#43](https://github.com/aer-works/aer-core/issues/43)) ([d44ad57](https://github.com/aer-works/aer-core/commit/d44ad57380af1aa50de3dfa658a82a1a005bd936))
+* **core:** M4b — Observation Tier (StdoutChunk/StderrChunk capture) ([#47](https://github.com/aer-works/aer-core/issues/47)) ([259060f](https://github.com/aer-works/aer-core/commit/259060f7635a27ae9ebd2b79e51fe61dc767c473)), closes [#44](https://github.com/aer-works/aer-core/issues/44)
+* **core:** M4c — Cancellation and ExitReason ([#48](https://github.com/aer-works/aer-core/issues/48)) ([8d32071](https://github.com/aer-works/aer-core/commit/8d3207173593a9ff5671576de1fc56dc93e626a6)), closes [#45](https://github.com/aer-works/aer-core/issues/45)
+* **core:** Process tree cleanup — Windows Job Objects + Unix setsid ([#36](https://github.com/aer-works/aer-core/issues/36)) ([c9792a4](https://github.com/aer-works/aer-core/commit/c9792a44f7e4295aabbbda6a508630875cc2c5bd))
+* **core:** Timeout and kill escalation (M2) ([#27](https://github.com/aer-works/aer-core/issues/27)) ([a97e623](https://github.com/aer-works/aer-core/commit/a97e623c96bfaedf3ab8a3fb60be2122c6305602))
+
+
+### Bug Fixes
+
+* **ci:** guard against null projectItems when issue/PR not on board ([#19](https://github.com/aer-works/aer-core/issues/19)) ([aebdfaf](https://github.com/aer-works/aer-core/commit/aebdfaf42e98f3b989e5f357b59e5b501bc034db))
+* **ci:** use PROJECT_TOKEN for project board automation ([#18](https://github.com/aer-works/aer-core/issues/18)) ([f072a4c](https://github.com/aer-works/aer-core/commit/f072a4c5e9eb3dfeb525a396c288c065fa4c3c2b))
+* **core:** Concurrent pipe drain, Unix orphan cleanup on wait error, M3 docs ([#40](https://github.com/aer-works/aer-core/issues/40)) ([cab0d44](https://github.com/aer-works/aer-core/commit/cab0d441db46d30da956b6576ba4f4c7878636b5))
+* **core:** Process tree deadlock fix, pre_exec safety, and M3 tests ([#39](https://github.com/aer-works/aer-core/issues/39)) ([a64c682](https://github.com/aer-works/aer-core/commit/a64c682a10c0b956b5b0f99ab7c0a75ddbb1709d))
+
+
+### Documentation
+
+* Commit M4 spec, reorganize spec folder, update CLAUDE.md for dotnet structure ([#52](https://github.com/aer-works/aer-core/issues/52)) ([9f67f83](https://github.com/aer-works/aer-core/commit/9f67f83a933fc2bdd74e7661d3d92419d90ea5c3))
+* **examples:** Add capture and cancel examples for M4b/M4c ([#50](https://github.com/aer-works/aer-core/issues/50)) ([e8af587](https://github.com/aer-works/aer-core/commit/e8af587f91c854a8361ac8a9a40e274b5849411c)), closes [#49](https://github.com/aer-works/aer-core/issues/49)
+* **examples:** Add M2 timeout and M3 process tree examples ([#41](https://github.com/aer-works/aer-core/issues/41)) ([3d2a116](https://github.com/aer-works/aer-core/commit/3d2a116d54c2c83f9aa3a54d279695b1961a8991))
+* expand README title to include full name (Agent Execution Runtime) ([f072a4c](https://github.com/aer-works/aer-core/commit/f072a4c5e9eb3dfeb525a396c288c065fa4c3c2b))
+* Mark M2 as in progress in README roadmap ([#29](https://github.com/aer-works/aer-core/issues/29)) ([5eeaf4f](https://github.com/aer-works/aer-core/commit/5eeaf4fd45867b44d0e5381bc5f5aeb79002d24f))
+* **spec:** Add M2 timeout & kill escalation contract ([#26](https://github.com/aer-works/aer-core/issues/26)) ([68587a4](https://github.com/aer-works/aer-core/commit/68587a4e14980f001f28c930f81eebeb1bbe168d))
+* **spec:** Add M3 process tree cleanup contract ([#35](https://github.com/aer-works/aer-core/issues/35)) ([b37393c](https://github.com/aer-works/aer-core/commit/b37393cee7bb87a687161158796b0ad7f94fee55)), closes [#31](https://github.com/aer-works/aer-core/issues/31)
+* update README and CLAUDE for aer-core restructure and M4 examples ([13055bf](https://github.com/aer-works/aer-core/commit/13055bfdd2d2f18e50c99039cc667491c0ef7b03))
+
+
+### Continuous Integration
+
+* fix org name in project automation ([c1cec16](https://github.com/aer-works/aer-core/commit/c1cec16616b9fca6eda52c555f664e0977c94775))
+* fix org name in project automation ([2b5cc36](https://github.com/aer-works/aer-core/commit/2b5cc365b2378c1e08944c774b636c71d5d74142))
+
+
+### Tests
+
+* **core:** M2 timeout and kill escalation integration tests ([#28](https://github.com/aer-works/aer-core/issues/28)) ([c063674](https://github.com/aer-works/aer-core/commit/c06367466d9a4f9d90baa793eaf7de3ca48a809d))
+
+
+### Miscellaneous
+
+* **core:** Milestone 1 — core scaffold and process lifecycle ([#14](https://github.com/aer-works/aer-core/issues/14)) ([abf11ff](https://github.com/aer-works/aer-core/commit/abf11ff32bede0adfd64cf8cef9952cd5ca2caae))
+* flatten core/ directory for aer-core repository rename ([e09065c](https://github.com/aer-works/aer-core/commit/e09065cd400799c669b47b12747195734be17b05))
+* flatten core/ directory to root for aer-core repository rename ([f9fd01f](https://github.com/aer-works/aer-core/commit/f9fd01fab6dc6afe91d31f5410576f59d6bc287f))
+* **main:** release core 0.1.1 ([#16](https://github.com/aer-works/aer-core/issues/16)) ([0396983](https://github.com/aer-works/aer-core/commit/039698397a6decb5a6ee25e787469cf2373f03a9))
+* **main:** release core 0.2.0 ([#30](https://github.com/aer-works/aer-core/issues/30)) ([3ad67ff](https://github.com/aer-works/aer-core/commit/3ad67ff1c6e8a52d256767064c0825d189966658))
+* **main:** release core 0.3.0 ([#38](https://github.com/aer-works/aer-core/issues/38)) ([cf42064](https://github.com/aer-works/aer-core/commit/cf4206464337aec8c1d18e6e3724f8a1904f7ebc))
+* **main:** release core 0.4.0 ([2ec5ac9](https://github.com/aer-works/aer-core/commit/2ec5ac9aa3aa314e6427fffac924f1f48149c381))
+* **main:** release core 0.4.0 ([a093422](https://github.com/aer-works/aer-core/commit/a0934227211412d672596540dde49ece7a8e20a8))
+* update release-please config for flat repo ([5baf08f](https://github.com/aer-works/aer-core/commit/5baf08f68e6c5979f03cfd10e434f855318a165d))
+* update release-please config for flat repo ([7cefe08](https://github.com/aer-works/aer-core/commit/7cefe08694b61185ae862e48d77690c9bd62f285))
+
 ## [0.4.0](https://github.com/aer-runtime/aer/compare/core-v0.3.0...core-v0.4.0) (2026-06-28)
 
 
