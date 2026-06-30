@@ -1,0 +1,7 @@
+<Project>
+  <PropertyGroup>
+    <!-- Surface all recommended analyzer diagnostics during dotnet build / pixi run dotnet-lint -->
+    <AnalysisMode>Recommended</AnalysisMode>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+  </PropertyGroup>
+</Project>
