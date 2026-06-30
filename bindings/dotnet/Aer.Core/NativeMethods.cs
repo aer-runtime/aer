@@ -11,11 +11,11 @@ internal static class NativeMethods
     private const string Lib = "aer_core";
 
     /// <summary>
-    /// Create a new task. Returns <see cref="nint.Zero"/> on invalid input.
-    /// The returned handle must be freed with <see cref="aer_task_free"/>.
+    /// Create a new task. Returns an invalid handle on invalid input.
+    /// The returned handle is freed automatically via <see cref="AerTaskHandle.ReleaseHandle"/>.
     /// </summary>
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-    public static extern nint aer_task_new(
+    public static extern AerTaskHandle aer_task_new(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string program,
         nint args,
         nuint argsLen);
@@ -32,10 +32,10 @@ internal static class NativeMethods
 
     /// <summary>
     /// Create a cancellation handle. Must be called before <see cref="aer_task_run"/>.
-    /// Returns <see cref="nint.Zero"/> on failure. Free with <see cref="aer_cancel_free"/>.
+    /// Returns an invalid handle on failure. Freed automatically via <see cref="AerCancelHandle.ReleaseHandle"/>.
     /// </summary>
     [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-    public static extern nint aer_task_make_cancel_handle(nint task);
+    public static extern AerCancelHandle aer_task_make_cancel_handle(nint task);
 
     /// <summary>
     /// Spawn the process and block until it exits. <paramref name="callback"/> may be <see langword="null"/>.
