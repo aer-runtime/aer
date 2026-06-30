@@ -37,3 +37,8 @@ jobs:
 
       - name: .NET test
         run: pixi run dotnet-test
+
+      - name: Stop .NET processes before cleanup
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: Get-Process dotnet -ErrorAction SilentlyContinue | Stop-Process -Force
