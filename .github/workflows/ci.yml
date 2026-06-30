@@ -28,3 +28,12 @@ jobs:
 
       - name: Test
         run: pixi run test
+
+      - name: .NET check formatting
+        run: pixi run dotnet-fmt-check
+
+      - name: .NET lint
+        run: pixi run dotnet-lint
+
+      - name: .NET test
+        run: pixi run dotnet-test

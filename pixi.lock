@@ -11,7 +11,10 @@ environments:
       linux-64:
       - conda: https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-20_gnu.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/binutils_impl_linux-64-2.45.1-default_hfdba357_102.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/dotnet-runtime-10.0.0-h84d6215_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/dotnet-sdk-10.0.100-h84d6215_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/gcc_impl_linux-64-15.2.0-ha6850e4_19.conda
+      - conda: https://conda.anaconda.org/conda-forge/linux-64/icu-78.3-h33c6efd_0.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/ld_impl_linux-64-2.45.1-default_hbd61a6d_102.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libgcc-15.2.0-he0feb66_19.conda
       - conda: https://conda.anaconda.org/conda-forge/linux-64/libgomp-15.2.0-he0feb66_19.conda
@@ -28,9 +31,14 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/tzdata-2025c-hc9c84f9_1.conda
       osx-arm64:
       - conda: https://conda.anaconda.org/conda-forge/noarch/rust-std-aarch64-apple-darwin-1.96.0-hf6ec828_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/dotnet-runtime-10.0.0-hce30654_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/dotnet-sdk-10.0.100-hce30654_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/osx-arm64/icu-78.3-hef89b57_0.conda
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/rust-1.96.0-h4ff7c5d_0.conda
       win-64:
       - conda: https://conda.anaconda.org/conda-forge/noarch/rust-std-x86_64-pc-windows-msvc-1.96.0-h17fc481_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/win-64/dotnet-runtime-10.0.0-h57928b3_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/win-64/dotnet-sdk-10.0.100-h57928b3_0.conda
       - conda: https://conda.anaconda.org/conda-forge/win-64/rust-1.96.0-hf8d6059_0.conda
 packages:
 - conda: https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-20_gnu.conda
@@ -61,6 +69,32 @@ packages:
   run_exports: {}
   size: 3661455
   timestamp: 1774197460085
+- conda: https://conda.anaconda.org/conda-forge/linux-64/dotnet-runtime-10.0.0-h84d6215_0.conda
+  sha256: 6cd38decdc40b67427c532beeb1bebb7d43881f005ac405b07f0c0ebccb0817d
+  md5: aae41f008fb51777cfada693ee8c2019
+  depends:
+  - __glibc >=2.17,<3.0.a0
+  - icu
+  - libgcc >=13
+  - libstdcxx >=13
+  license: MIT
+  license_family: MIT
+  run_exports: {}
+  size: 28731851
+  timestamp: 1764576298576
+- conda: https://conda.anaconda.org/conda-forge/linux-64/dotnet-sdk-10.0.100-h84d6215_0.conda
+  sha256: 00b9b82d63c9aa797e79f3a85296271d22c29addc6111e22d06183b85557b5a6
+  md5: 5bd7e88caab18d6fa1d1808232513b30
+  depends:
+  - __glibc >=2.17,<3.0.a0
+  - dotnet-runtime 10.0.0.*
+  - libgcc >=13
+  - libstdcxx >=13
+  license: MIT
+  license_family: MIT
+  run_exports: {}
+  size: 136504807
+  timestamp: 1764576365568
 - conda: https://conda.anaconda.org/conda-forge/linux-64/gcc_impl_linux-64-15.2.0-ha6850e4_19.conda
   sha256: 2c0b2870210cfc7e8561676844f4bd3884b345c19100e1da84cbfb4994d8f104
   md5: 1c2eddf7501ef92050d3fbb11df61ee3
@@ -78,6 +112,20 @@ packages:
   run_exports: {}
   size: 81043749
   timestamp: 1778860073982
+- conda: https://conda.anaconda.org/conda-forge/linux-64/icu-78.3-h33c6efd_0.conda
+  sha256: fbf86c4a59c2ed05bbffb2ba25c7ed94f6185ec30ecb691615d42342baa1a16a
+  md5: c80d8a3b84358cb967fa81e7075fbc8a
+  depends:
+  - __glibc >=2.17,<3.0.a0
+  - libgcc >=14
+  - libstdcxx >=14
+  license: MIT
+  license_family: MIT
+  run_exports:
+    weak:
+    - icu >=78.3,<79.0a0
+  size: 12723451
+  timestamp: 1773822285671
 - conda: https://conda.anaconda.org/conda-forge/linux-64/ld_impl_linux-64-2.45.1-default_hbd61a6d_102.conda
   sha256: 3d584956604909ff5df353767f3a2a2f60e07d070b328d109f30ac40cd62df6c
   md5: 18335a698559cdbcd86150a48bf54ba6
@@ -275,6 +323,38 @@ packages:
   run_exports: {}
   size: 119135
   timestamp: 1767016325805
+- conda: https://conda.anaconda.org/conda-forge/osx-arm64/dotnet-runtime-10.0.0-hce30654_0.conda
+  sha256: 8eecfc70d2087295d9d3dfdaf3eb630ab267cbff7667696527bc1453557e9857
+  md5: 2b07dae65121b2ab19d2722d0394baa7
+  depends:
+  - icu
+  license: MIT
+  license_family: MIT
+  run_exports: {}
+  size: 25676203
+  timestamp: 1764576195036
+- conda: https://conda.anaconda.org/conda-forge/osx-arm64/dotnet-sdk-10.0.100-hce30654_0.conda
+  sha256: acfd0462196f022ace7ec37544e21bfe72e0f189b5cb6a6c562d21693f5fdc9f
+  md5: a5ff4a0132e1142b0003131b9f470d93
+  depends:
+  - dotnet-runtime 10.0.0.*
+  license: MIT
+  license_family: MIT
+  run_exports: {}
+  size: 131136863
+  timestamp: 1764576264230
+- conda: https://conda.anaconda.org/conda-forge/osx-arm64/icu-78.3-hef89b57_0.conda
+  sha256: 3a7907a17e9937d3a46dfd41cffaf815abad59a569440d1e25177c15fd0684e5
+  md5: f1182c91c0de31a7abd40cedf6a5ebef
+  depends:
+  - __osx >=11.0
+  license: MIT
+  license_family: MIT
+  run_exports:
+    weak:
+    - icu >=78.3,<79.0a0
+  size: 12361647
+  timestamp: 1773822915649
 - conda: https://conda.anaconda.org/conda-forge/osx-arm64/rust-1.96.0-h4ff7c5d_0.conda
   sha256: 91fe26674ea4680e2c7847fdafdc76ba0956f1026eff306aa7bfc089318720c3
   md5: 7e6a23a17d56b0960ec7799402e10273
@@ -285,6 +365,24 @@ packages:
   run_exports: {}
   size: 179967376
   timestamp: 1780046072905
+- conda: https://conda.anaconda.org/conda-forge/win-64/dotnet-runtime-10.0.0-h57928b3_0.conda
+  sha256: 0707dfd8eb03aae3263b25b36fae3aeef332feaf89e25278d10211ddda0b5771
+  md5: 459da043d2e99f92f7ea123f9f3824ca
+  license: MIT
+  license_family: MIT
+  run_exports: {}
+  size: 28926799
+  timestamp: 1764576397445
+- conda: https://conda.anaconda.org/conda-forge/win-64/dotnet-sdk-10.0.100-h57928b3_0.conda
+  sha256: dd599c2f3677a53becdf6b2360bb55f86e748216411692af310bb22118e92241
+  md5: 5eb46845e8f3d9d06b19adcc94cda530
+  depends:
+  - dotnet-runtime 10.0.0.*
+  license: MIT
+  license_family: MIT
+  run_exports: {}
+  size: 143429902
+  timestamp: 1764576558695
 - conda: https://conda.anaconda.org/conda-forge/win-64/rust-1.96.0-hf8d6059_0.conda
   sha256: caac31627be2428f0091fa13737e2efb0884a0dd75d169f8e13d57d44969e1b1
   md5: 2b578f2c0e20601ef2968e779ca5f9a3
