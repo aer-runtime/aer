@@ -20,6 +20,10 @@ jobs:
         with:
           cache: true
 
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.x"
+
       - name: Check formatting
         run: pixi run fmt-check
 
@@ -37,10 +41,3 @@ jobs:
 
       - name: .NET test
         run: pixi run dotnet-test
-
-      - name: Shut down .NET build servers before cleanup
-        if: always() && runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          dotnet build-server shutdown
-          Get-Process VBCSCompiler -ErrorAction SilentlyContinue | Stop-Process -Force

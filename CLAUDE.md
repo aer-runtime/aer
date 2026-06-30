@@ -33,9 +33,19 @@ aer-core/
 
 ---
 
+## Prerequisites
+
+- **Rust toolchain** — managed by pixi; no separate `rustup` install needed.
+- **.NET 10 SDK** — required for `dotnet-*` tasks; install separately (not managed by pixi).
+  - Windows: `winget install Microsoft.DotNet.SDK.10`
+  - macOS: `brew install dotnet-sdk` or the official installer
+  - Linux: follow [Microsoft's install guide](https://learn.microsoft.com/en-us/dotnet/core/install/linux)
+
 ## Running tasks
 
-Always use `pixi run <task>`. Never invoke `cargo` directly in CI.
+Always use `pixi run <task>`. Never invoke `cargo` or `dotnet` directly in CI.
+
+**Rust**
 
 | Task | Command |
 |---|---|
@@ -50,7 +60,15 @@ Always use `pixi run <task>`. Never invoke `cargo` directly in CI.
 | `example-capture` | `cargo run --example capture` (M4) |
 | `example-cancel` | `cargo run --example cancel` (M4) |
 
-Pixi manages the Rust toolchain — no separate `rustup` install needed.
+**\.NET binding** (requires .NET 10 SDK on PATH)
+
+| Task | Command |
+|---|---|
+| `dotnet-build` | `dotnet build` in `bindings/dotnet/` |
+| `dotnet-test` | `dotnet test` (also runs `build` first) |
+| `dotnet-lint` | `dotnet build -warnaserror` |
+| `dotnet-fmt` | `dotnet format` (fix) |
+| `dotnet-fmt-check` | `dotnet format --verify-no-changes` (CI) |
 
 ---
 
