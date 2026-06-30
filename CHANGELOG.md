@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.6.0](https://github.com/aer-works/aer-core/compare/aer-core-v0.5.0...aer-core-v0.6.0) (2026-06-30)
+
+
+### Features
+
+* **dotnet:** Bridge C callback to managed delegate (M5 [#61](https://github.com/aer-works/aer-core/issues/61)) ([#70](https://github.com/aer-works/aer-core/issues/70)) ([e80bc4c](https://github.com/aer-works/aer-core/commit/e80bc4cc746a03a24419f5e34681f136a8f5bc22))
+* **dotnet:** Safe handles for task and cancel pointers ([#69](https://github.com/aer-works/aer-core/issues/69)) ([32149fd](https://github.com/aer-works/aer-core/commit/32149fd3f4ceead0fb23210754df6fbd7be947b2))
+* **dotnet:** Scaffold Aer.Core P/Invoke layer and xUnit project ([e4c744c](https://github.com/aer-works/aer-core/commit/e4c744c1d0a7e0f610cf67544c9130dcf68f57ab))
+* **dotnet:** Scaffold Aer.Core P/Invoke layer and xUnit project (M5 issue [#59](https://github.com/aer-works/aer-core/issues/59)) ([a8ea939](https://github.com/aer-works/aer-core/commit/a8ea939abcc0b77d6ec1e6ec33a55a64cbab8e4e))
+
+
+### Documentation
+
+* Add IMPLEMENTATION_PLAN.md and redirect AER Overview to aer-flow ([dad2d58](https://github.com/aer-works/aer-core/commit/dad2d58db5b517d20ef7a4dce6e6181c2058755b))
+* Add IMPLEMENTATION_PLAN.md and redirect AER Overview to aer-flow ([850db7a](https://github.com/aer-works/aer-core/commit/850db7a29cdf258ff0ee7539aa7dba509f514c45))
+
+
+### Continuous Integration
+
+* Kill dotnet processes before cleanup to fix Windows EPERM on post-job ([44f78cb](https://github.com/aer-works/aer-core/commit/44f78cb0f32308f2bab5d2c89e0418290632ce4a))
+* Remove dotnet-sdk from pixi, use actions/setup-dotnet in CI ([7389794](https://github.com/aer-works/aer-core/commit/738979478beabdd8a00b73d8b28b9db8e1338350))
+* Shut down Roslyn build server before cleanup to fix Windows EBUSY ([b34a9b4](https://github.com/aer-works/aer-core/commit/b34a9b42a58fffff2b721b7cd40104f54b0e3f2e))
+
 ## [0.5.0](https://github.com/aer-works/aer-core/compare/aer-core-v0.4.0...aer-core-v0.5.0) (2026-06-29)
 
 
